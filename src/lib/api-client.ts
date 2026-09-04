@@ -58,8 +58,21 @@ export function rowToPost(row: any, extras: Partial<Post> = {}): Post {
 }
 
 export async function getPosts(
-  options: { limit?: number; userId?: string; tag?: string; before?: string; following?: boolean } = {},
+  options: {
+    limit?: number;
+    userId?: string;
+    /** Alias of `userId`, kept for call sites that speak in author terms. */
+    authorId?: string;
+    tag?: string;
+    before?: string;
+    following?: boolean;
+    bookmarked?: boolean;
+    filter?: "foryou" | "following" | "latest";
+  } = {},
 ): Promise<Post[]> {
+  if (options.bookmarked) return getBookmarkedPosts(options.limit ?? 50);
+  if (options.filter === "following") options = { ...options, following: true };
+  if (options.authorId) options = { ...options, userId: options.authorId };
   const limit = Math.min(options.limit ?? appConfig.feed.pageSize, appConfig.feed.maxPageSize);
   let query = db
     .from("posts")
@@ -1076,4 +1089,140 @@ export async function preloadFeedBundle(): Promise<PreloadBundleResponse> {
       .catch(() => [] as TrendingTag[]),
   ]);
   return { foryou, following, latest: foryou, stories, spaces, trendingTags };
+}
+
+
+/* ------------------------------------------------- compatibility surface ----
+ * Thin adapters so feature pages can speak in domain terms while the data
+ * layer stays a single Supabase-backed implementation.
+ * -------------------------------------------------------------------------*/
+
+/** Signed-in profile, resolved from the live session. */
+export async function getCurrentUser(): Promise<{ user: Profile | null }> {
+  const { data } = await supabase.auth.getUser();
+  if (!data.user) return { user: null };
+  const { data: row } = await db
+    .from("profiles")
+    .select("*")
+    .eq("auth_user_id", data.user.id)
+    .maybeSingle();
+  return { user: row ? rowToProfile(row as any) : null };
+}
+
+/** Look a profile up by id or @username. */
+export async function getUserProfile(idOrUsername: string): Promise<{ profile: Profile | null }> {
+  const handle = idOrUsername.replace(/^@/, "");
+  const { data } = await db
+    .from("profiles")
+    .select("*")
+    .or(`id.eq.${handle},username.eq.${handle}`)
+    .maybeSingle();
+  if (!data) return { profile: null };
+  const profile = rowToProfile(data as any);
+  cacheProfiles([profile]);
+  return { profile };
+}
+
+export async function getProfileById(idOrUsername: string): Promise<Profile | null> {
+  return (await getUserProfile(idOrUsername)).profile;
+}
+
+/** Bookmarked posts for the signed-in user. */
+export async function getBookmarks(): Promise<Post[]> {
+  return getBookmarkedPosts();
+}
+
+/** Trending tags reshaped as browsable topics. */
+export async function getTopics(): Promise<{ topics: Topic[] }> {
+  const { trendingTags } = await getTrendingTags();
+  const topics: Topic[] = trendingTags.slice(0, 12).map((t, i) => ({
+    id: t.tag,
+    name: `#${t.tag}`,
+    description: `${t.count} recent posts`,
+    posts: t.count,
+    gradient: TOPIC_GRADIENTS[i % TOPIC_GRADIENTS.length] ?? "from-brand to-brand-pink",
+  }));
+  return { topics };
+}
+
+const TOPIC_GRADIENTS = [
+  "from-brand to-brand-pink",
+  "from-amber-400 to-rose-500",
+  "from-sky-400 to-indigo-500",
+  "from-emerald-400 to-teal-500",
+  "from-fuchsia-500 to-purple-600",
+  "from-orange-400 to-red-500",
+];
+
+/** Cross-entity search over posts, people and Spaces. */
+export async function globalSearch(
+  query: string,
+): Promise<{ posts: Post[]; profiles: Profile[]; spaces: Space[] }> {
+  const q = query.trim();
+  if (!q) return { posts: [], profiles: [], spaces: [] };
+  const like = `%${q}%`;
+  const [postRes, profileRes, spaceRes] = await Promise.all([
+    db.from("posts").select("*").eq("hidden", false).ilike("content", like).limit(20),
+    db.from("profiles").select("*").or(`username.ilike.${like},display_name.ilike.${like}`).limit(20),
+    db.from("spaces").select("*").or(`title.ilike.${like},topic.ilike.${like}`).limit(20),
+  ]);
+  const posts = ((postRes.data ?? []) as any[]).map((row) => rowToPost(row));
+  await hydrateAuthors(posts.map((p) => p.user_id));
+  const profiles = ((profileRes.data ?? []) as any[]).map((row) => rowToProfile(row));
+  cacheProfiles(profiles);
+  return { posts, profiles, spaces: ((spaceRes.data ?? []) as any[]) as Space[] };
+}
+
+/** Single Space by id. */
+export async function getSpace(id: string): Promise<{ space: Space | null }> {
+  const { data } = await db.from("spaces").select("*").eq("id", id).maybeSingle();
+  return { space: (data as Space) ?? null };
+}
+
+export async function markNotificationRead(id: string) {
+  await db.from("notifications").update({ read: true }).eq("id", id);
+  return { success: true };
+}
+
+export const markNotificationAsRead = markNotificationRead;
+
+export async function markAllNotificationsRead() {
+  await markNotificationsRead();
+  return { success: true };
+}
+
+export const markAllNotificationsAsRead = markAllNotificationsRead;
+
+/** Send to a conversation id or straight to a recipient profile id. */
+export async function sendDirectMessage(
+  recipientOrConversationId: string,
+  body: string,
+  mediaUrl?: string | null,
+) {
+  return sendMessage(recipientOrConversationId, body, mediaUrl ?? null);
+}
+
+/** Record impressions for a batch of posts (viewport analytics). */
+export async function recordPostImpressions(postIds: string[]) {
+  await Promise.all(postIds.map((id) => recordPostImpression(id).catch(() => null)));
+  return { ok: true };
+}
+
+/** Deterministic quick-reply suggestions for a chat thread. */
+export async function generateSmartRepliesAI(messages: string[]): Promise<{ replies: string[] }> {
+  const last = (messages[messages.length - 1] ?? "").toLowerCase();
+  if (last.includes("?"))
+    return { replies: ["Good question — let me check.", "Yes, absolutely.", "Not sure yet, I'll confirm."] };
+  if (last.includes("thanks") || last.includes("thank you"))
+    return { replies: ["Anytime!", "Happy to help 🙌", "You got it."] };
+  return { replies: ["Sounds good!", "On it 👍", "Let's do it."] };
+}
+
+/** Runtime configuration exposed to admin/system surfaces. */
+export async function getSystemConfig() {
+  return {
+    driver: "supabase" as const,
+    features: appConfig.features,
+    brand: appConfig.brand,
+  };
 }
