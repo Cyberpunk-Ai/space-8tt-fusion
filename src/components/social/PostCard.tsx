@@ -171,7 +171,7 @@ export function PostCard({
   const { currentPlan, isPlus, isPro } = usePlan();
   const { user } = useAuth();
   const activeUser = user || currentUser;
-  const author = useProfile(post.user_id);
+  const author = useProfile(post.user_id) ?? getProfile(post.user_id);
   const cardRef = useRef<HTMLElement>(null);
   const [state, setState] = useState({
     liked: post.likedByMe,
