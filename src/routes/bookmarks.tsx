@@ -34,7 +34,7 @@ function BookmarksPage() {
           .from("post_bookmarks")
           .select("post_id")
           .eq("user_id", currentUserId);
-        const ids = new Set((data ?? []).map((r: any) => r.post_id));
+        const ids = new Set((data ?? []).map((r: { post_id: string }) => r.post_id));
         const all = await getPosts({ limit: 100 });
         setPosts(all.filter((p) => ids.has(p.id)));
       } catch {

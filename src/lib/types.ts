@@ -69,6 +69,23 @@ export interface SystemSettings {
   };
 }
 
+export interface AdminCharts {
+  daily_impressions: { date: string; impressions: number; engagement: number }[];
+  engagement_distribution: { name: string; value: number; color: string }[];
+  hourly_traffic: { hour: string; requests: number }[];
+  system_load_timeline: { time: string; cpu: number; memory: number }[];
+  top_creators: {
+    id: string;
+    name: string;
+    username: string;
+    verified: boolean;
+    impressions: number;
+    followers: number;
+    posts: number;
+  }[];
+  category_velocity: { tag: string; count: number; growth: string }[];
+}
+
 export interface AdminOverviewData {
   stats: {
     total_users: number;
@@ -101,7 +118,7 @@ export interface AdminOverviewData {
     stories_mb: number;
     spaces_audio_mb: number;
   };
-  charts?: any;
+  charts: AdminCharts;
   recent_activity?: any[];
   recent_reports?: any[];
 }
