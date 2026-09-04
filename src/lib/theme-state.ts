@@ -211,7 +211,12 @@ export function useTheme() {
   };
 }
 
-if (typeof window !== "undefined") {
+/**
+ * Applied from the root component after hydration — running it at module scope
+ * mutates <html> before React hydrates and causes an attribute mismatch.
+ */
+export function bootstrapTheme() {
+  if (typeof window === "undefined") return;
   try {
     applyThemeToDOM(getStoredThemeSettings());
   } catch (e) {
