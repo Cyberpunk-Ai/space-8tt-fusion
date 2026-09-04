@@ -142,7 +142,6 @@ function Sidebar({
           onNavigate?.();
           if (typeof window !== "undefined") {
             window.dispatchEvent(new CustomEvent("spaces:trigger_compose"));
-            window.dispatchEvent(new CustomEvent("spaces:trigger_compose"));
           }
         }}
         className="mt-4 flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-brand to-brand-pink px-6 py-3 font-bold text-white shadow-soft transition-all duration-300 hover:shadow-glow hover:brightness-105 active:scale-[0.98]"
@@ -357,7 +356,6 @@ export function AppShell({
         search={{ compose: "true" }}
         onClick={() => {
           if (typeof window !== "undefined") {
-            window.dispatchEvent(new CustomEvent("spaces:trigger_compose"));
             window.dispatchEvent(new CustomEvent("spaces:trigger_compose"));
           }
         }}

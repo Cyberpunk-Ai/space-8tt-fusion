@@ -21,9 +21,6 @@ function notify() {
       window.dispatchEvent(
         new CustomEvent("spaces:unread_updated", { detail: { ...globalUnread } })
       );
-      window.dispatchEvent(
-        new CustomEvent("spaces:unread_updated", { detail: { ...globalUnread } })
-      );
     });
   }
 }

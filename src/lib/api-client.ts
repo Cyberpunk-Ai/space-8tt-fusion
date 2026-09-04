@@ -6,6 +6,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { cacheProfiles, currentUser, currentUserId, rowToProfile } from "@/lib/profile-service";
 import { emitRealtime } from "@/lib/realtime";
+import { appConfig } from "@/lib/config";
 import type {
   AdminCharts,
   AdminOverviewData,
@@ -56,17 +57,45 @@ export function rowToPost(row: any, extras: Partial<Post> = {}): Post {
   };
 }
 
-export async function getPosts(options: { limit?: number; userId?: string; tag?: string } = {}): Promise<Post[]> {
-  let query = db.from("posts").select("*").order("created_at", { ascending: false }).limit(options.limit ?? 50);
+export async function getPosts(
+  options: { limit?: number; userId?: string; tag?: string; before?: string; following?: boolean } = {},
+): Promise<Post[]> {
+  const limit = Math.min(options.limit ?? appConfig.feed.pageSize, appConfig.feed.maxPageSize);
+  let query = db
+    .from("posts")
+    .select("*")
+    .eq("hidden", false)
+    .order("created_at", { ascending: false })
+    .limit(limit);
   if (options.userId) query = query.eq("user_id", options.userId);
+  if (options.before) query = query.lt("created_at", options.before);
+  if (options.tag) query = query.contains("tags", [options.tag]);
+  if (options.following) {
+    const { data: follows } = await db.from("follows").select("target_id").eq("follower_id", me());
+    const ids = ((follows ?? []) as any[]).map((f) => f.target_id);
+    if (ids.length === 0) return [];
+    query = query.in("user_id", [...ids, me()]);
+  }
   const { data, error } = await query;
   if (error) throw error;
   const posts = (data ?? []).map((row: any) => rowToPost(row));
-  const filtered = options.tag
-    ? posts.filter((p: Post) => p.tags?.some((t) => t.toLowerCase() === options.tag!.toLowerCase()))
-    : posts;
-  await hydrateAuthors(filtered.map((p: Post) => p.user_id));
-  return filtered;
+  await hydrateAuthors(posts.map((p: Post) => p.user_id));
+  return posts;
+}
+
+/** Posts the signed-in user has bookmarked, fetched by join instead of client filtering. */
+export async function getBookmarkedPosts(limit = 50): Promise<Post[]> {
+  const { data } = await db
+    .from("bookmarks")
+    .select("post_id, created_at, posts(*)")
+    .eq("user_id", me())
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  const posts = ((data ?? []) as any[])
+    .map((row) => (row.posts ? rowToPost(row.posts) : null))
+    .filter(Boolean) as Post[];
+  await hydrateAuthors(posts.map((p) => p.user_id));
+  return posts;
 }
 
 async function hydrateAuthors(ids: string[]) {
@@ -290,16 +319,17 @@ export async function toggleLikeStory(storyId: string) {
   const userId = me();
   const { data: existing } = await db
     .from("story_likes")
-    .select("id")
+    .select("story_id")
     .eq("story_id", storyId)
     .eq("user_id", userId)
     .maybeSingle();
-  if (existing) await db.from("story_likes").delete().eq("id", existing.id);
+  if (existing)
+    await db.from("story_likes").delete().eq("story_id", storyId).eq("user_id", userId);
   else await db.from("story_likes").insert({ story_id: storyId, user_id: userId });
 
   const { count } = await db
     .from("story_likes")
-    .select("id", { count: "exact", head: true })
+    .select("story_id", { count: "exact", head: true })
     .eq("story_id", storyId);
   return { liked: !existing, likesCount: count ?? 0 };
 }
@@ -381,6 +411,28 @@ export async function getSpaces(): Promise<{ spaces: Space[] }> {
   return { spaces: (data ?? []).map(rowToSpace) };
 }
 
+/** Start a new live audio room hosted by the signed-in profile. */
+export async function createSpace(input: { title: string; topic: string; gradient?: string }) {
+  const id = `space_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const { data, error } = await db
+    .from("spaces")
+    .insert({
+      id,
+      title: input.title,
+      topic: input.topic,
+      host_id: me(),
+      gradient: input.gradient ?? "from-brand to-brand-pink",
+      live: true,
+      listeners: 1,
+    })
+    .select("*")
+    .single();
+  if (error) throw error;
+  await db.from("space_participants").insert({ space_id: id, user_id: me(), role: "host" });
+  emitRealtime("space:created", data);
+  return data as any;
+}
+
 export async function joinSpace(spaceId: string) {
   await db.from("space_participants").upsert({ space_id: spaceId, user_id: me(), role: "listener" });
   emitRealtime("space:joined", { spaceId, userId: me() });
@@ -448,11 +500,22 @@ export async function getConversations(): Promise<Conversation[]> {
     .order("updated_at", { ascending: false });
   const rows = (data ?? []) as any[];
   await hydrateAuthors(rows.flatMap((r) => [r.user_a, r.user_b]));
+  const { data: unreadRows } = await db
+    .from("messages")
+    .select("conversation_id")
+    .is("read_at", null)
+    .neq("sender_id", userId)
+    .in("conversation_id", rows.map((r) => r.id));
+  const unreadByConversation = new Map<string, number>();
+  for (const row of (unreadRows ?? []) as any[]) {
+    const key = String(row.conversation_id);
+    unreadByConversation.set(key, (unreadByConversation.get(key) ?? 0) + 1);
+  }
   return rows.map((row: any) => ({
     id: row.id,
     participant_id: row.user_a === userId ? row.user_b : row.user_a,
     preview: row.preview ?? "",
-    unread: 0,
+    unread: unreadByConversation.get(String(row.id)) ?? 0,
     online: false,
     updated_at: row.updated_at ?? nowIso(),
   }));
