@@ -83,7 +83,7 @@ function Sidebar({
   unreadNotifications?: number;
 }) {
   const { currentPlan, isPlus, isPro } = usePlan();
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   const { isDark, toggleTheme } = useTheme();
   const planInfo = PLAN_DETAILS[currentPlan] || PLAN_DETAILS.free;
   const activeUser = user || currentUser;
@@ -210,7 +210,7 @@ function Sidebar({
         {user ? (
           <button
             onClick={() => {
-              void signOutUser();
+              void signOut();
               onNavigate?.();
             }}
             className="mt-2 w-full rounded-2xl border border-border/70 py-2 text-xs font-bold text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
