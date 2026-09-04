@@ -4,9 +4,7 @@ import { useEffect, useState } from "react";
 import { AppShell, PageHeader } from "@/components/social/AppShell";
 import { PostCard } from "@/components/social/PostCard";
 import { FeedSkeleton } from "@/components/social/PostSkeleton";
-import { getPosts } from "@/lib/api-client";
-import { supabase } from "@/integrations/supabase/client";
-import { currentUserId } from "@/lib/profile-service";
+import { getBookmarkedPosts } from "@/lib/api-client";
 import type { Post } from "@/lib/types";
 
 export const Route = createFileRoute("/bookmarks")({
@@ -28,21 +26,10 @@ function BookmarksPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await (supabase as any)
-          .from("bookmarks")
-          .select("post_id")
-          .eq("user_id", currentUserId);
-        const ids = new Set((data ?? []).map((r: { post_id: string }) => r.post_id));
-        const all = await getPosts({ limit: 100 });
-        setPosts(all.filter((p) => ids.has(p.id)));
-      } catch {
-        setPosts([]);
-      } finally {
-        setLoading(false);
-      }
-    })();
+    getBookmarkedPosts()
+      .then(setPosts)
+      .catch(() => setPosts([]))
+      .finally(() => setLoading(false));
   }, []);
 
   return (

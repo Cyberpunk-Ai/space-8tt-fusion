@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, memo } from "react";
 import { Link } from "@tanstack/react-router";
 import { createPortal } from "react-dom";
 import {
@@ -159,7 +159,7 @@ function isMediaVideo(url?: string | null): boolean {
   );
 }
 
-export function PostCard({
+function PostCardBase({
   post,
   index = 0,
   onDeleted,
@@ -920,3 +920,7 @@ export function PostCard({
   );
 }
 
+/** Memoised so a feed re-render only re-renders the cards whose data changed. */
+export const PostCard = memo(PostCardBase, (prev, next) =>
+  prev.post === next.post && prev.index === next.index && prev.onDeleted === next.onDeleted,
+);
