@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
+import { Route as AuthRouteImport } from './routes/auth'
 import { Route as BookmarksRouteImport } from './routes/bookmarks'
 import { Route as ExploreRouteImport } from './routes/explore'
 import { Route as FeedRouteImport } from './routes/feed'
@@ -29,6 +30,11 @@ const IndexRoute = IndexRouteImport.update({
 const AdminRoute = AdminRouteImport.update({
   id: '/admin',
   path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthRoute = AuthRouteImport.update({
+  id: '/auth',
+  path: '/auth',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BookmarksRoute = BookmarksRouteImport.update({
@@ -80,6 +86,7 @@ const SpacesRoute = SpacesRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/auth': typeof AuthRoute
   '/bookmarks': typeof BookmarksRoute
   '/explore': typeof ExploreRoute
   '/feed': typeof FeedRoute
@@ -93,6 +100,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/auth': typeof AuthRoute
   '/bookmarks': typeof BookmarksRoute
   '/explore': typeof ExploreRoute
   '/feed': typeof FeedRoute
@@ -107,6 +115,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/auth': typeof AuthRoute
   '/bookmarks': typeof BookmarksRoute
   '/explore': typeof ExploreRoute
   '/feed': typeof FeedRoute
@@ -122,6 +131,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/admin'
+    | '/auth'
     | '/bookmarks'
     | '/explore'
     | '/feed'
@@ -135,6 +145,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/admin'
+    | '/auth'
     | '/bookmarks'
     | '/explore'
     | '/feed'
@@ -148,6 +159,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/admin'
+    | '/auth'
     | '/bookmarks'
     | '/explore'
     | '/feed'
@@ -162,6 +174,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
+  AuthRoute: typeof AuthRoute
   BookmarksRoute: typeof BookmarksRoute
   ExploreRoute: typeof ExploreRoute
   FeedRoute: typeof FeedRoute
@@ -187,6 +200,13 @@ declare module '@tanstack/react-router' {
       path: '/admin'
       fullPath: '/admin'
       preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth': {
+      id: '/auth'
+      path: '/auth'
+      fullPath: '/auth'
+      preLoaderRoute: typeof AuthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/bookmarks': {
@@ -258,6 +278,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
+  AuthRoute: AuthRoute,
   BookmarksRoute: BookmarksRoute,
   ExploreRoute: ExploreRoute,
   FeedRoute: FeedRoute,
