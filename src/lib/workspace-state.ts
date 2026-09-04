@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 
 import { currentUser } from "@/lib/profile-service";
+import { supabase } from "@/integrations/supabase/client";
+import { signedInProfileId } from "@/lib/remote-store";
+
+const db = supabase as any;
 
 export type WorkspaceRole = "Owner" | "Admin" | "Editor" | "Analyst" | "Contributor";
 
@@ -77,12 +81,46 @@ function mutateActive(fn: (ws: Workspace) => Workspace) {
   commit(workspaces.map((ws) => (ws.id === activeWsId ? fn(ws) : ws)));
 }
 
+async function hydrate() {
+  const userId = signedInProfileId();
+  if (!userId) return;
+  const { data: owned } = await db.from("workspaces").select("*").order("created_at");
+  const rows = (owned ?? []) as Record<string, any>[];
+  if (rows.length === 0) return;
+  const { data: memberRows } = await db
+    .from("workspace_members")
+    .select("*")
+    .in("workspace_id", rows.map((r) => r.id));
+  const members = (memberRows ?? []) as Record<string, any>[];
+  const next: Workspace[] = rows.map((row) => ({
+    id: String(row.id),
+    name: String(row.name),
+    slug: String(row.name).toLowerCase().replace(/\s+/g, "-"),
+    logoEmoji: "🚀",
+    createdAt: new Date(row.created_at).toLocaleDateString(),
+    seatsTotal: 5,
+    members: members
+      .filter((m) => m.workspace_id === row.id)
+      .map((m) => ({
+        id: String(m.id),
+        name: String(m.name || String(m.email).split("@")[0]),
+        email: String(m.email),
+        avatar_url: null,
+        role: (m.role ?? "Contributor") as WorkspaceRole,
+        status: (m.status === "active" ? "active" : "invited") as WorkspaceMember["status"],
+      })),
+  }));
+  activeWsId = next[0]!.id;
+  commit(next);
+}
+
 export function useWorkspace() {
   const [, force] = useState(0);
 
   useEffect(() => {
     const rerender = () => force((n) => n + 1);
     listeners.add(rerender);
+    void hydrate();
     return () => {
       listeners.delete(rerender);
     };
@@ -98,7 +136,12 @@ export function useWorkspace() {
       activeWsId = id;
       listeners.forEach((fn) => fn());
     },
-    inviteMember(email: string, role: WorkspaceRole) {
+    async inviteMember(email: string, role: WorkspaceRole) {
+      if (signedInProfileId() && !activeWsId.startsWith("ws_")) {
+        await db
+          .from("workspace_members")
+          .insert({ workspace_id: activeWsId, email, role, status: "invited" });
+      }
       mutateActive((ws) => ({
         ...ws,
         members: [
@@ -115,17 +158,29 @@ export function useWorkspace() {
       }));
     },
     removeMember(id: string) {
+      void db.from("workspace_members").delete().eq("id", id);
       mutateActive((ws) => ({ ...ws, members: ws.members.filter((m) => m.id !== id) }));
     },
     updateMemberRole(id: string, role: WorkspaceRole) {
+      void db.from("workspace_members").update({ role }).eq("id", id);
       mutateActive((ws) => ({
         ...ws,
         members: ws.members.map((m) => (m.id === id ? { ...m, role } : m)),
       }));
     },
-    createWorkspace(name: string, logoEmoji = "✨") {
+    async createWorkspace(name: string, logoEmoji = "✨") {
+      const userId = signedInProfileId();
+      let id = `ws_${Date.now()}`;
+      if (userId) {
+        const { data } = await db
+          .from("workspaces")
+          .insert({ name, owner_id: userId })
+          .select("id")
+          .maybeSingle();
+        if (data?.id) id = String(data.id);
+      }
       const ws: Workspace = {
-        id: `ws_${Date.now()}`,
+        id,
         name,
         slug: name.toLowerCase().replace(/\s+/g, "-"),
         logoEmoji,

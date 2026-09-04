@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 
+import { attachRemoteRecord, insertOwnedRow, loadOwnedRows, signedInProfileId } from "@/lib/remote-store";
+import { getTipsForMe, sendTipApi } from "@/lib/api-client";
+
 export interface BankDetails {
   bankName: string;
   routingNumber: string;
@@ -108,6 +111,62 @@ function read(): MonetizationState {
 let state = read();
 const listeners = new Set<() => void>();
 
+const remote = attachRemoteRecord<MonetizationState>({
+  table: "monetization_settings",
+  fromRow: (row) => ({
+    activePayoutMethod: (row.payout_method ?? "bank") as PayoutMethod,
+    bankDetails: { ...state.bankDetails, ...(row.bank_details ?? {}) },
+    stripeDetails: { ...state.stripeDetails, ...(row.stripe_details ?? {}) },
+    cryptoDetails: { ...state.cryptoDetails, ...(row.crypto_details ?? {}) },
+    settings: {
+      ...state.settings,
+      minimumTip: Number(row.min_tip ?? state.settings.minimumTip),
+    },
+  }),
+  toRow: (s) => ({
+    payout_method: s.activePayoutMethod,
+    bank_details: s.bankDetails,
+    stripe_details: s.stripeDetails,
+    crypto_details: s.cryptoDetails,
+    min_tip: s.settings.minimumTip,
+    tips_enabled: true,
+  }),
+  apply: (patch) => {
+    state = { ...state, ...patch };
+    listeners.forEach((fn) => fn());
+  },
+});
+
+async function hydrateLedger() {
+  if (!signedInProfileId()) return;
+  const [tips, payouts] = await Promise.all([
+    getTipsForMe(),
+    loadOwnedRows("payouts", (row) => ({
+      id: String(row.id),
+      amount: Number(row.amount),
+      method: String(row.method),
+      date: new Date(row.created_at).toLocaleDateString(),
+      status: (row.status === "paid" ? "paid" : "pending") as PayoutRecord["status"],
+    })),
+  ]);
+  const tipsReceived: TipRecord[] = tips.map((row: any) => ({
+    id: String(row.id),
+    senderName: String(row.from_user_id),
+    senderUsername: String(row.from_user_id),
+    amount: Number(row.amount),
+    message: row.message || undefined,
+    timestamp: new Date(row.created_at).toLocaleString(),
+  }));
+  const totalEarnings = tipsReceived.reduce((sum, t) => sum + t.amount, 0);
+  const paidOut = payouts.filter((p) => p.status === "paid").reduce((sum, p) => sum + p.amount, 0);
+  commit({
+    tipsReceived,
+    payouts,
+    totalEarnings,
+    pendingBalance: Math.max(0, totalEarnings - paidOut),
+  });
+}
+
 function commit(patch: Partial<MonetizationState>) {
   state = { ...state, ...patch };
   try {
@@ -116,6 +175,7 @@ function commit(patch: Partial<MonetizationState>) {
     /* storage unavailable */
   }
   listeners.forEach((fn) => fn());
+  remote.push(state);
 }
 
 export function useMonetization() {
@@ -125,12 +185,20 @@ export function useMonetization() {
     const sync = () => setSnapshot({ ...state });
     listeners.add(sync);
     sync();
+    void hydrateLedger();
     return () => {
       listeners.delete(sync);
     };
   }, []);
 
   async function sendTip(input: SendTipInput) {
+    await sendTipApi({
+      recipientUsername: input.recipientUsername,
+      amount: input.amount,
+      message: input.message,
+      postId: input.postId,
+      spaceId: input.spaceId,
+    });
     const record: TipRecord = {
       id: `tip_${Date.now()}`,
       senderName: input.senderName,
@@ -150,8 +218,13 @@ export function useMonetization() {
 
   async function requestPayout(): Promise<PayoutRecord | null> {
     if (state.pendingBalance <= 0) return null;
+    const row = await insertOwnedRow("payouts", {
+      amount: state.pendingBalance,
+      method: state.activePayoutMethod,
+      status: "paid",
+    });
     const record: PayoutRecord = {
-      id: `po_${Date.now()}`,
+      id: String(row?.id ?? `po_${Date.now()}`),
       amount: state.pendingBalance,
       method: state.activePayoutMethod,
       date: new Date().toLocaleDateString(),

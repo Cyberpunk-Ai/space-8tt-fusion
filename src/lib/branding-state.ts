@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import { attachRemoteRecord } from "@/lib/remote-store";
+
 export type AuraThemeId = "aurora" | "sunset" | "ocean" | "forest" | "royal" | "mono";
 
 export interface AuraTheme {
@@ -84,6 +86,20 @@ function read(): BrandingState {
 let state = read();
 const listeners = new Set<() => void>();
 
+const remote = attachRemoteRecord<BrandingState>({
+  table: "branding_settings",
+  fromRow: (row) => ({
+    themeId: (row.theme ?? "aurora") as AuraThemeId,
+    tagline: row.tagline ?? "",
+    showAuraOnPosts: Boolean(row.post_aura),
+  }),
+  toRow: (s) => ({ theme: s.themeId, tagline: s.tagline, post_aura: s.showAuraOnPosts }),
+  apply: (patch) => {
+    state = { ...state, ...patch };
+    listeners.forEach((fn) => fn());
+  },
+});
+
 export function useBranding() {
   const [branding, setBranding] = useState<BrandingState>(state);
 
@@ -104,6 +120,7 @@ export function useBranding() {
       /* storage unavailable */
     }
     listeners.forEach((fn) => fn());
+    remote.push(state);
   }
 
   return {
