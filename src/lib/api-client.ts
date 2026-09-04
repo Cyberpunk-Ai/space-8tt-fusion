@@ -56,7 +56,7 @@ export function rowToPost(row: any, extras: Partial<Post> = {}): Post {
   };
 }
 
-export async function getPosts(options: { limit?: number; userId?: string; tag?: string } = {}) {
+export async function getPosts(options: { limit?: number; userId?: string; tag?: string } = {}): Promise<Post[]> {
   let query = db.from("posts").select("*").order("created_at", { ascending: false }).limit(options.limit ?? 50);
   if (options.userId) query = query.eq("user_id", options.userId);
   const { data, error } = await query;
