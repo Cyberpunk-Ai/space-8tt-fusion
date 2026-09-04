@@ -319,16 +319,17 @@ export async function toggleLikeStory(storyId: string) {
   const userId = me();
   const { data: existing } = await db
     .from("story_likes")
-    .select("id")
+    .select("story_id")
     .eq("story_id", storyId)
     .eq("user_id", userId)
     .maybeSingle();
-  if (existing) await db.from("story_likes").delete().eq("id", existing.id);
+  if (existing)
+    await db.from("story_likes").delete().eq("story_id", storyId).eq("user_id", userId);
   else await db.from("story_likes").insert({ story_id: storyId, user_id: userId });
 
   const { count } = await db
     .from("story_likes")
-    .select("id", { count: "exact", head: true })
+    .select("story_id", { count: "exact", head: true })
     .eq("story_id", storyId);
   return { liked: !existing, likesCount: count ?? 0 };
 }
@@ -408,6 +409,28 @@ function rowToSpace(row: any): Space {
 export async function getSpaces(): Promise<{ spaces: Space[] }> {
   const { data } = await db.from("spaces").select("*").order("created_at", { ascending: false });
   return { spaces: (data ?? []).map(rowToSpace) };
+}
+
+/** Start a new live audio room hosted by the signed-in profile. */
+export async function createSpace(input: { title: string; topic: string; gradient?: string }) {
+  const id = `space_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const { data, error } = await db
+    .from("spaces")
+    .insert({
+      id,
+      title: input.title,
+      topic: input.topic,
+      host_id: me(),
+      gradient: input.gradient ?? "from-brand to-brand-pink",
+      live: true,
+      listeners: 1,
+    })
+    .select("*")
+    .single();
+  if (error) throw error;
+  await db.from("space_participants").insert({ space_id: id, user_id: me(), role: "host" });
+  emitRealtime("space:created", data);
+  return data as any;
 }
 
 export async function joinSpace(spaceId: string) {
