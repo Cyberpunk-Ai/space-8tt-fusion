@@ -5,8 +5,9 @@ import { AppShell, PageHeader } from "@/components/social/AppShell";
 import { PostCard } from "@/components/social/PostCard";
 import { FeedSkeleton } from "@/components/social/PostSkeleton";
 import { DefaultRail, SearchBox } from "@/components/social/RightRail";
-import { getPosts, getTrendingTags } from "@/lib/api-client";
-import type { Post, TrendingTag } from "@/lib/types";
+import { Avatar } from "@/components/social/Avatar";
+import { getPosts, getTrendingTags, getUsers } from "@/lib/api-client";
+import type { Post, Profile, TrendingTag } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/explore")({
@@ -28,19 +29,43 @@ export const Route = createFileRoute("/explore")({
 });
 
 function ExplorePage() {
-  const { tag } = Route.useSearch();
+  const { tag, q } = Route.useSearch();
   const navigate = Route.useNavigate();
   const [posts, setPosts] = useState<Post[]>([]);
   const [tags, setTags] = useState<TrendingTag[]>([]);
   const [loading, setLoading] = useState(true);
+  const [people, setPeople] = useState<Profile[]>([]);
 
   useEffect(() => {
     setLoading(true);
     getPosts(tag ? { tag } : {})
-      .then(setPosts)
+      .then((rows) =>
+        setPosts(
+          q ? rows.filter((r) => r.content.toLowerCase().includes(q.toLowerCase())) : rows,
+        ),
+      )
       .catch(() => setPosts([]))
       .finally(() => setLoading(false));
-  }, [tag]);
+  }, [tag, q]);
+
+  useEffect(() => {
+    if (!q) {
+      setPeople([]);
+      return;
+    }
+    const needle = q.toLowerCase();
+    getUsers()
+      .then((res) =>
+        setPeople(
+          res.profiles.filter(
+            (p) =>
+              p.username.toLowerCase().includes(needle) ||
+              p.display_name.toLowerCase().includes(needle),
+          ),
+        ),
+      )
+      .catch(() => setPeople([]));
+  }, [q]);
 
   useEffect(() => {
     getTrendingTags()
@@ -78,6 +103,35 @@ function ExplorePage() {
           </button>
         ))}
       </div>
+
+      {q ? (
+        <div className="mb-6">
+          <h2 className="mb-3 text-sm font-black uppercase tracking-wide text-muted-foreground">
+            People matching “{q}”
+          </h2>
+          {people.length === 0 ? (
+            <p className="rounded-2xl border border-border/70 bg-card p-4 text-sm text-muted-foreground">
+              No creators found.
+            </p>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {people.map((p) => (
+                <a
+                  key={p.id}
+                  href={`/profile?user=${p.id}`}
+                  className="flex items-center gap-3 rounded-2xl border border-border/70 bg-card p-3 transition-colors hover:bg-foreground/5"
+                >
+                  <Avatar name={p.display_name} src={p.avatar_url} className="h-9 w-9 text-xs" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-bold">{p.display_name}</span>
+                    <span className="block truncate text-xs text-muted-foreground">@{p.username}</span>
+                  </span>
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
 
       <div className="space-y-4">
         {loading ? (
