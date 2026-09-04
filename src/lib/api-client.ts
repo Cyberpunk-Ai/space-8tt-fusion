@@ -477,11 +477,22 @@ export async function getConversations(): Promise<Conversation[]> {
     .order("updated_at", { ascending: false });
   const rows = (data ?? []) as any[];
   await hydrateAuthors(rows.flatMap((r) => [r.user_a, r.user_b]));
+  const { data: unreadRows } = await db
+    .from("messages")
+    .select("conversation_id")
+    .is("read_at", null)
+    .neq("sender_id", userId)
+    .in("conversation_id", rows.map((r) => r.id));
+  const unreadByConversation = new Map<string, number>();
+  for (const row of (unreadRows ?? []) as any[]) {
+    const key = String(row.conversation_id);
+    unreadByConversation.set(key, (unreadByConversation.get(key) ?? 0) + 1);
+  }
   return rows.map((row: any) => ({
     id: row.id,
     participant_id: row.user_a === userId ? row.user_b : row.user_a,
     preview: row.preview ?? "",
-    unread: 0,
+    unread: unreadByConversation.get(String(row.id)) ?? 0,
     online: false,
     updated_at: row.updated_at ?? nowIso(),
   }));
