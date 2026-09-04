@@ -1,0 +1,93 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useCallback, useEffect, useState } from "react";
+
+import { AdminAuditLogsTab } from "@/components/admin/AdminAuditLogsTab";
+import { AdminContentTab } from "@/components/admin/AdminContentTab";
+import { AdminHeader } from "@/components/admin/AdminHeader";
+import { AdminModerationTab } from "@/components/admin/AdminModerationTab";
+import { AdminOverviewTab } from "@/components/admin/AdminOverviewTab";
+import { AdminSystemSettingsTab } from "@/components/admin/AdminSystemSettingsTab";
+import { AdminUsersTab } from "@/components/admin/AdminUsersTab";
+import { getAdminOverview } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth-state";
+import { currentUser } from "@/lib/profile-service";
+import type { AdminOverviewData, UserRole } from "@/lib/types";
+import { cn } from "@/lib/utils";
+
+export const Route = createFileRoute("/admin")({
+  head: () => ({
+    meta: [
+      { title: "Admin Console — Spaces" },
+      { name: "description", content: "Moderation queue, user management, content review, audit logs and platform settings for Spaces administrators." },
+      { property: "og:title", content: "Admin Console — Spaces" },
+      { property: "og:description", content: "Moderation, users, content, audit logs and platform settings." },
+      { property: "og:type", content: "website" },
+      { name: "robots", content: "noindex" },
+      { name: "twitter:card", content: "summary" },
+    ],
+  }),
+  component: AdminPage,
+});
+
+const TABS = ["overview", "users", "content", "moderation", "audit", "settings"] as const;
+
+function AdminPage() {
+  const { user } = useAuth();
+  const profile = user || currentUser;
+  const [activeRole, setActiveRole] = useState<UserRole>((profile.role as UserRole) || "superadmin");
+  const [tab, setTab] = useState<(typeof TABS)[number]>("overview");
+  const [overview, setOverview] = useState<AdminOverviewData | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      setOverview(await getAdminOverview());
+    } catch {
+      setOverview(null);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-6">
+      <AdminHeader
+        currentProfile={profile}
+        activeRole={activeRole}
+        onRoleChange={setActiveRole}
+        systemHealth={overview?.stats.system_health}
+        onRefresh={load}
+        isRefreshing={refreshing}
+      />
+
+      <div className="mb-6 flex flex-wrap gap-2">
+        {TABS.map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={cn(
+              "rounded-full border px-4 py-1.5 text-xs font-bold capitalize transition-colors",
+              tab === t ? "border-brand bg-brand/10 text-brand" : "border-border text-muted-foreground hover:bg-foreground/5",
+            )}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === "overview" && overview && (
+        <AdminOverviewTab overview={overview} activeRole={activeRole} onNavigateTab={(t) => setTab(t as any)} />
+      )}
+      {tab === "users" && <AdminUsersTab activeRole={activeRole} currentUserId={profile.id} />}
+      {tab === "content" && <AdminContentTab activeRole={activeRole} currentUserId={profile.id} />}
+      {tab === "moderation" && <AdminModerationTab activeRole={activeRole} currentUserId={profile.id} />}
+      {tab === "audit" && <AdminAuditLogsTab activeRole={activeRole} />}
+      {tab === "settings" && <AdminSystemSettingsTab activeRole={activeRole} currentUserId={profile.id} />}
+    </div>
+  );
+}
