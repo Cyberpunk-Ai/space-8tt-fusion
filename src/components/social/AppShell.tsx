@@ -207,7 +207,27 @@ function Sidebar({
             <p className="truncate text-xs text-muted-foreground">@{activeUser.username}</p>
           </div>
         </Link>
+        {user ? (
+          <button
+            onClick={() => {
+              void signOutUser();
+              onNavigate?.();
+            }}
+            className="mt-2 w-full rounded-2xl border border-border/70 py-2 text-xs font-bold text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
+          >
+            Sign out
+          </button>
+        ) : (
+          <Link
+            to="/auth"
+            onClick={onNavigate}
+            className="mt-2 block rounded-2xl border border-brand/40 py-2 text-center text-xs font-bold text-brand transition-colors hover:bg-brand/10"
+          >
+            Sign in or join
+          </Link>
+        )}
       </div>
+
     </div>
   );
 }
