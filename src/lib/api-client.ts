@@ -6,6 +6,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { cacheProfiles, currentUser, currentUserId, rowToProfile } from "@/lib/profile-service";
 import { emitRealtime } from "@/lib/realtime";
+import { appConfig } from "@/lib/config";
 import type {
   AdminCharts,
   AdminOverviewData,
@@ -56,17 +57,45 @@ export function rowToPost(row: any, extras: Partial<Post> = {}): Post {
   };
 }
 
-export async function getPosts(options: { limit?: number; userId?: string; tag?: string } = {}): Promise<Post[]> {
-  let query = db.from("posts").select("*").order("created_at", { ascending: false }).limit(options.limit ?? 50);
+export async function getPosts(
+  options: { limit?: number; userId?: string; tag?: string; before?: string; following?: boolean } = {},
+): Promise<Post[]> {
+  const limit = Math.min(options.limit ?? appConfig.feed.pageSize, appConfig.feed.maxPageSize);
+  let query = db
+    .from("posts")
+    .select("*")
+    .eq("hidden", false)
+    .order("created_at", { ascending: false })
+    .limit(limit);
   if (options.userId) query = query.eq("user_id", options.userId);
+  if (options.before) query = query.lt("created_at", options.before);
+  if (options.tag) query = query.contains("tags", [options.tag]);
+  if (options.following) {
+    const { data: follows } = await db.from("follows").select("target_id").eq("follower_id", me());
+    const ids = ((follows ?? []) as any[]).map((f) => f.target_id);
+    if (ids.length === 0) return [];
+    query = query.in("user_id", [...ids, me()]);
+  }
   const { data, error } = await query;
   if (error) throw error;
   const posts = (data ?? []).map((row: any) => rowToPost(row));
-  const filtered = options.tag
-    ? posts.filter((p: Post) => p.tags?.some((t) => t.toLowerCase() === options.tag!.toLowerCase()))
-    : posts;
-  await hydrateAuthors(filtered.map((p: Post) => p.user_id));
-  return filtered;
+  await hydrateAuthors(posts.map((p: Post) => p.user_id));
+  return posts;
+}
+
+/** Posts the signed-in user has bookmarked, fetched by join instead of client filtering. */
+export async function getBookmarkedPosts(limit = 50): Promise<Post[]> {
+  const { data } = await db
+    .from("bookmarks")
+    .select("post_id, created_at, posts(*)")
+    .eq("user_id", me())
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  const posts = ((data ?? []) as any[])
+    .map((row) => (row.posts ? rowToPost(row.posts) : null))
+    .filter(Boolean) as Post[];
+  await hydrateAuthors(posts.map((p) => p.user_id));
+  return posts;
 }
 
 async function hydrateAuthors(ids: string[]) {
