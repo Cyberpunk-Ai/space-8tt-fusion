@@ -1,0 +1,946 @@
+/**
+ * Data access layer for the Spaces app. All calls go through the Lovable Cloud
+ * backend (Supabase) with defensive mapping so the UI keeps working while the
+ * schema evolves.
+ */
+import { supabase } from "@/integrations/supabase/client";
+import { cacheProfiles, currentUser, currentUserId, rowToProfile } from "@/lib/profile-service";
+import { emitRealtime } from "@/lib/realtime";
+import type {
+  AdminCharts,
+  AdminOverviewData,
+  AuditLog,
+  Conversation,
+  Message,
+  ModerationReport,
+  Notification,
+  Post,
+  PostComment,
+  Profile,
+  Space,
+  Story,
+  SystemSettings,
+  TrendingTag,
+  UserFeedPreferences,
+  FeedFeedbackPayload,
+} from "@/lib/types";
+
+const db = supabase as any;
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function me() {
+  return currentUserId || currentUser.id;
+}
+
+/* ------------------------------------------------------------------ posts */
+
+export function rowToPost(row: any, extras: Partial<Post> = {}): Post {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    content: row.content ?? "",
+    image_gradient: row.image_gradient ?? null,
+    media_url: row.media_url ?? null,
+    image_url: row.image_url ?? null,
+    tags: row.tags ?? [],
+    created_at: row.created_at ?? nowIso(),
+    likeCount: row.like_count ?? 0,
+    commentCount: row.comment_count ?? 0,
+    repostCount: row.repost_count ?? 0,
+    viewCount: row.view_count ?? 0,
+    poll: row.poll ?? null,
+    ...extras,
+  };
+}
+
+export async function getPosts(options: { limit?: number; userId?: string; tag?: string } = {}): Promise<Post[]> {
+  let query = db.from("posts").select("*").order("created_at", { ascending: false }).limit(options.limit ?? 50);
+  if (options.userId) query = query.eq("user_id", options.userId);
+  const { data, error } = await query;
+  if (error) throw error;
+  const posts = (data ?? []).map((row: any) => rowToPost(row));
+  const filtered = options.tag
+    ? posts.filter((p: Post) => p.tags?.some((t) => t.toLowerCase() === options.tag!.toLowerCase()))
+    : posts;
+  await hydrateAuthors(filtered.map((p: Post) => p.user_id));
+  return filtered;
+}
+
+async function hydrateAuthors(ids: string[]) {
+  const unique = Array.from(new Set(ids.filter(Boolean)));
+  if (unique.length === 0) return;
+  const { data } = await db.from("profiles").select("*").in("id", unique);
+  if (data) cacheProfiles((data as any[]).map(rowToProfile));
+}
+
+export async function createPost(input: {
+  content: string;
+  image_gradient?: string | undefined;
+  media_url?: string | undefined;
+  tags?: string[];
+  poll?: any;
+}) {
+  const payload = {
+    user_id: me(),
+    content: input.content,
+    image_gradient: input.image_gradient ?? null,
+    media_url: input.media_url ?? null,
+    tags: input.tags ?? [],
+    poll: input.poll ?? null,
+  };
+  const { data, error } = await db.from("posts").insert(payload).select("*").single();
+  if (error) throw error;
+  const post = rowToPost(data);
+  emitRealtime("post:created", post);
+  return { ...post, post } as Post & { post: Post };
+}
+
+export async function deletePost(id: string) {
+  const { error } = await db.from("posts").delete().eq("id", id);
+  if (error) throw error;
+  emitRealtime("post:deleted", { id });
+  return { ok: true };
+}
+
+async function toggleRelation(table: string, postId: string, event: string, countField: string) {
+  const userId = me();
+  const { data: existing } = await db
+    .from(table)
+    .select("id")
+    .eq("post_id", postId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (existing) {
+    await db.from(table).delete().eq("id", existing.id);
+  } else {
+    await db.from(table).insert({ post_id: postId, user_id: userId });
+  }
+
+  const { count } = await db
+    .from(table)
+    .select("id", { count: "exact", head: true })
+    .eq("post_id", postId);
+
+  const result = { active: !existing, count: count ?? 0 };
+  emitRealtime(event, { id: postId, [countField]: result.count, active: result.active });
+  return result;
+}
+
+export async function toggleLikePost(postId: string) {
+  const { active, count } = await toggleRelation("post_likes", postId, "post:liked", "likeCount");
+  emitRealtime("post_like_updated", { postId, likeCount: count });
+  return { liked: active, likeCount: count, likesCount: count };
+}
+
+export async function toggleRepostPost(postId: string) {
+  const { active, count } = await toggleRelation("post_reposts", postId, "post:reposted", "repostCount");
+  emitRealtime("post_repost_updated", { postId, repostCount: count });
+  return { reposted: active, repostCount: count };
+}
+
+export async function toggleBookmarkPost(postId: string) {
+  const { active } = await toggleRelation("post_bookmarks", postId, "post:bookmarked", "bookmarkCount");
+  return { bookmarked: active };
+}
+
+export async function addPostComment(postId: string, content: string) {
+  const { data, error } = await db
+    .from("post_comments")
+    .insert({ post_id: postId, user_id: me(), content })
+    .select("*")
+    .single();
+  if (error) throw error;
+  const comment: PostComment = {
+    id: data.id,
+    post_id: data.post_id,
+    user_id: data.user_id,
+    content: data.content,
+    created_at: data.created_at,
+  };
+  emitRealtime("post:commented", { id: postId, comment });
+  emitRealtime("new_comment", { data: { ...comment, post_id: postId } });
+  return { comment, commentCount: undefined as unknown as number };
+}
+
+export async function getPostComments(postId: string): Promise<PostComment[]> {
+  const { data } = await db
+    .from("post_comments")
+    .select("*")
+    .eq("post_id", postId)
+    .order("created_at", { ascending: true });
+  return (data ?? []) as PostComment[];
+}
+
+export async function votePoll(postId: string, optionId: string) {
+  await db.from("poll_votes").insert({ post_id: postId, option_id: optionId, user_id: me() });
+  const { data } = await db.from("posts").select("poll").eq("id", postId).maybeSingle();
+  const poll = data?.poll ?? null;
+  if (poll?.options) {
+    poll.options = poll.options.map((o: any) =>
+      o.id === optionId ? { ...o, votes: (o.votes ?? 0) + 1, votedByMe: true } : o,
+    );
+    poll.totalVotes = (poll.totalVotes ?? 0) + 1;
+    poll.hasVoted = true;
+    poll.userVotedOptionId = optionId;
+    await db.from("posts").update({ poll }).eq("id", postId);
+  }
+  emitRealtime("post:poll", { id: postId, poll });
+  emitRealtime("poll_updated", { postId, poll });
+  return { poll };
+}
+
+export async function recordPostImpression(postId: string) {
+  try {
+    await db.from("post_impressions").insert({ post_id: postId, user_id: me() });
+  } catch {
+    /* impressions are best-effort */
+  }
+  const { count } = await db
+    .from("post_impressions")
+    .select("id", { count: "exact", head: true })
+    .eq("post_id", postId);
+  return { viewCount: count ?? 0 };
+}
+
+/* ---------------------------------------------------------------- stories */
+
+function rowToStory(row: any): Story {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    type: row.type ?? (row.media_url ? "image" : "gradient"),
+    gradient: row.gradient ?? undefined,
+    media_url: row.media_url ?? undefined,
+    image_url: row.media_url ?? undefined,
+    text: row.text ?? undefined,
+    caption: row.caption ?? undefined,
+    created_at: row.created_at ?? nowIso(),
+    expires_at: row.expires_at ?? nowIso(),
+    view_count: row.view_count ?? 0,
+    likes_count: row.likes_count ?? 0,
+    location: row.location ?? undefined,
+    mood: row.mood ?? undefined,
+    stickers: row.stickers ?? [],
+  };
+}
+
+export async function getStories(): Promise<Story[]> {
+  const { data } = await db.from("stories").select("*").order("created_at", { ascending: false });
+  const stories = (data ?? []).map(rowToStory);
+  await hydrateAuthors(stories.map((s: Story) => s.user_id));
+  return stories;
+}
+
+export async function createStory(input: {
+  text?: string;
+  gradient?: string;
+  media_url?: string | null;
+  location?: string | undefined;
+  mood?: string | undefined;
+  stickers?: any[];
+}) {
+  const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await db
+    .from("stories")
+    .insert({
+      user_id: me(),
+      text: input.text ?? null,
+      gradient: input.gradient ?? null,
+      media_url: input.media_url ?? null,
+      location: input.location ?? null,
+      mood: input.mood ?? null,
+      stickers: input.stickers ?? [],
+      type: input.media_url ? "image" : "gradient",
+      expires_at: expires,
+    })
+    .select("*")
+    .single();
+  if (error) throw error;
+  const story = rowToStory(data);
+  emitRealtime("story:created", story);
+  return { story };
+}
+
+export async function deleteStory(id: string) {
+  const { error } = await db.from("stories").delete().eq("id", id);
+  if (error) throw error;
+  emitRealtime("story:deleted", { id });
+  return { ok: true };
+}
+
+export async function toggleLikeStory(storyId: string) {
+  const userId = me();
+  const { data: existing } = await db
+    .from("story_likes")
+    .select("id")
+    .eq("story_id", storyId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (existing) await db.from("story_likes").delete().eq("id", existing.id);
+  else await db.from("story_likes").insert({ story_id: storyId, user_id: userId });
+
+  const { count } = await db
+    .from("story_likes")
+    .select("id", { count: "exact", head: true })
+    .eq("story_id", storyId);
+  return { liked: !existing, likesCount: count ?? 0 };
+}
+
+/* --------------------------------------------------------------- profiles */
+
+export async function getUsers(): Promise<{ profiles: Profile[] }> {
+  const { data } = await db.from("profiles").select("*").limit(50);
+  const profiles = (data ?? []).map(rowToProfile);
+  cacheProfiles(profiles);
+  return { profiles };
+}
+
+export async function updateUserProfile(patch: Partial<Profile>) {
+  const { data, error } = await db
+    .from("profiles")
+    .update({
+      display_name: patch.display_name,
+      bio: patch.bio,
+      location: patch.location,
+      website: patch.website,
+      avatar_url: patch.avatar_url,
+    })
+    .eq("id", me())
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  const user = data ? rowToProfile(data) : ({ ...currentUser, ...patch } as Profile);
+  emitRealtime("profile:updated", user);
+  return { user };
+}
+
+export async function toggleFollowUser(targetUserId: string) {
+  const userId = me();
+  const { data: existing } = await db
+    .from("follows")
+    .select("id")
+    .eq("follower_id", userId)
+    .eq("following_id", targetUserId)
+    .maybeSingle();
+  if (existing) await db.from("follows").delete().eq("id", existing.id);
+  else await db.from("follows").insert({ follower_id: userId, following_id: targetUserId });
+  emitRealtime("follow:changed", { targetUserId, following: !existing });
+  return { following: !existing };
+}
+
+export async function uploadMedia(file: File, folder: "avatars" | "posts" | "stories" | "media" = "media") {
+  const ext = file.name.split(".").pop() || "bin";
+  const path = `${folder}/${me()}/${Date.now()}.${ext}`;
+  const { error } = await supabase.storage.from("media").upload(path, file, { upsert: true });
+  if (error) throw error;
+  const { data } = supabase.storage.from("media").getPublicUrl(path);
+  return { url: data.publicUrl, path };
+}
+
+/* ----------------------------------------------------------------- spaces */
+
+function rowToSpace(row: any): Space {
+  return {
+    id: row.id,
+    title: row.title,
+    host_id: row.host_id,
+    host_name: row.host_name ?? undefined,
+    topic: row.topic ?? "General",
+    listeners: row.listeners ?? 0,
+    live: row.is_live ?? row.live ?? false,
+    is_live: row.is_live ?? false,
+    gradient: row.gradient ?? "from-brand to-brand-pink",
+    recorded: row.recorded ?? false,
+    duration: row.duration ?? undefined,
+    recording_url: row.recording_url ?? undefined,
+    participants: row.participants ?? [],
+    messages: row.messages ?? [],
+  };
+}
+
+export async function getSpaces(): Promise<{ spaces: Space[] }> {
+  const { data } = await db.from("spaces").select("*").order("created_at", { ascending: false });
+  return { spaces: (data ?? []).map(rowToSpace) };
+}
+
+export async function joinSpace(spaceId: string) {
+  await db.from("space_participants").upsert({ space_id: spaceId, user_id: me(), role: "listener" });
+  emitRealtime("space:joined", { spaceId, userId: me() });
+  return { ok: true };
+}
+
+export async function leaveSpace(spaceId: string) {
+  await db.from("space_participants").delete().eq("space_id", spaceId).eq("user_id", me());
+  emitRealtime("space:left", { spaceId, userId: me() });
+  return { ok: true };
+}
+
+export async function toggleHandRaised(spaceId: string, raised: boolean) {
+  await db
+    .from("space_participants")
+    .update({ hand_raised: raised })
+    .eq("space_id", spaceId)
+    .eq("user_id", me());
+  emitRealtime("space:hand", { spaceId, userId: me(), raised });
+  return { handRaised: raised };
+}
+
+export async function toggleSpeaking(spaceId: string, speaking: boolean, muted: boolean) {
+  await db
+    .from("space_participants")
+    .update({ is_speaking: speaking, is_muted: muted })
+    .eq("space_id", spaceId)
+    .eq("user_id", me());
+  emitRealtime("space:speaking", { spaceId, userId: me(), speaking, muted });
+  return { speaking, muted };
+}
+
+export async function sendSpaceMessage(spaceId: string, body: string) {
+  const message = {
+    id: `sm_${Date.now()}`,
+    userId: me(),
+    name: currentUser.display_name,
+    body,
+    createdAt: nowIso(),
+  };
+  try {
+    await db.from("space_messages").insert({ space_id: spaceId, user_id: me(), body });
+  } catch {
+    /* best effort */
+  }
+  emitRealtime("space:message", { spaceId, message });
+  return { message };
+}
+
+export async function terminateSpaceAdmin(spaceId: string, actorId: string) {
+  await db.from("spaces").update({ is_live: false }).eq("id", spaceId);
+  await logAudit(actorId, "space.terminate", "space", spaceId, "Space terminated by admin", "danger");
+  emitRealtime("space:terminated", { id: spaceId });
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------------- chat */
+
+export async function getConversations(): Promise<Conversation[]> {
+  const { data } = await db
+    .from("conversations")
+    .select("*")
+    .order("updated_at", { ascending: false });
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    participant_id: row.participant_id ?? row.user_b ?? "",
+    preview: row.preview ?? "",
+    unread: row.unread ?? 0,
+    online: false,
+    updated_at: row.updated_at ?? nowIso(),
+  }));
+}
+
+export async function getMessages(conversationId: string): Promise<Message[]> {
+  const { data } = await db
+    .from("messages")
+    .select("*")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: true });
+  return (data ?? []) as Message[];
+}
+
+export async function sendMessage(recipientId: string, body: string) {
+  const { data, error } = await db
+    .from("messages")
+    .insert({ sender_id: me(), recipient_id: recipientId, body })
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  emitRealtime("message:created", data);
+  return { message: data as Message };
+}
+
+export async function getNotifications(): Promise<Notification[]> {
+  const { data } = await db
+    .from("notifications")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(50);
+  return (data ?? []) as Notification[];
+}
+
+export async function markNotificationsRead() {
+  await db.from("notifications").update({ read: true }).eq("recipient_id", me());
+  emitRealtime("notification:read", {});
+  return { ok: true };
+}
+
+/* --------------------------------------------------------- feed & tuning */
+
+export async function getFeedPreferences(): Promise<{ preferences: UserFeedPreferences }> {
+  const { data } = await db.from("feed_preferences").select("*").eq("user_id", me()).maybeSingle();
+  return { preferences: (data?.preferences ?? {}) as UserFeedPreferences };
+}
+
+export async function updateFeedPreferences(patch: Partial<UserFeedPreferences>) {
+  const { preferences } = await getFeedPreferences();
+  const merged = { ...preferences, ...patch };
+  await db.from("feed_preferences").upsert({ user_id: me(), preferences: merged });
+  return { preferences: merged as UserFeedPreferences };
+}
+
+export async function sendFeedFeedback(payload: FeedFeedbackPayload) {
+  const { preferences } = await getFeedPreferences();
+  const next: UserFeedPreferences = { ...preferences };
+  const action = payload.action ?? payload.signal;
+  if (action === "interested" && payload.tag) {
+    next.preferredTags = Array.from(new Set([...(next.preferredTags ?? []), payload.tag]));
+  }
+  if ((action === "not_interested" || action === "hide_tag") && payload.tag) {
+    next.mutedTags = Array.from(new Set([...(next.mutedTags ?? []), payload.tag]));
+  }
+  if (action === "mute_author" && payload.authorId) {
+    next.mutedAuthors = Array.from(new Set([...(next.mutedAuthors ?? []), payload.authorId]));
+  }
+  await db.from("feed_preferences").upsert({ user_id: me(), preferences: next });
+  return { preferences: next };
+}
+
+/* -------------------------------------------------------------- discovery */
+
+export async function getTrendingTags(): Promise<{ trendingTags: TrendingTag[] }> {
+  const { data } = await db.from("posts").select("tags").limit(300);
+  const counts = new Map<string, number>();
+  for (const row of (data ?? []) as any[]) {
+    for (const tag of row.tags ?? []) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+  }
+  const trendingTags = Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([tag, count]) => ({ tag, category: "Trending", count: `${count} posts` }));
+  return { trendingTags };
+}
+
+/* --------------------------------------------------------------------- AI */
+
+const AI_TONES = ["insightful", "playful", "bold", "reflective"];
+
+export async function generateAIDraft(prompt: string, currentDraft?: string) {
+  const tone = AI_TONES[Math.floor(Math.random() * AI_TONES.length)];
+  const seed = (currentDraft || prompt).trim();
+  const content = `${seed ? `${seed}\n\n` : ""}Here's a ${tone} take on ${prompt}: the best ideas come from shipping in public, listening closely, and iterating fast. What would you add?`;
+  const suggestedTags = prompt
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 3)
+    .slice(0, 3);
+  return { content, suggestedTags };
+}
+
+export async function generateAIStory(prompt: string) {
+  return {
+    text: `${prompt} — captured in the moment ✨`,
+    mood: "inspired",
+    suggestedStickers: ["✨", "🔥", "💫"],
+  };
+}
+
+export async function summarizeSpaceAI(title: string, topic: string, messages: string[]) {
+  const highlights = messages.slice(-3);
+  return {
+    summary: `"${title}" focused on ${topic}. The room covered ${messages.length} messages of live discussion.`,
+    keyTakeaways:
+      highlights.length > 0
+        ? highlights
+        : [`${topic} is trending`, "Community energy is high", "Next session coming soon"],
+  };
+}
+
+/* ------------------------------------------------------------------- tips */
+
+export async function sendTipApi(input: {
+  recipientUsername?: string;
+  recipientId?: string;
+  amount: number;
+  message?: string;
+  postId?: string;
+  spaceId?: string;
+}) {
+  try {
+    await db.from("tips").insert({
+      sender_id: me(),
+      recipient_username: input.recipientUsername ?? null,
+      amount: input.amount,
+      message: input.message ?? null,
+      post_id: input.postId ?? null,
+      space_id: input.spaceId ?? null,
+    });
+  } catch {
+    /* tips are best-effort while payments are simulated */
+  }
+  emitRealtime("tip:sent", input);
+  return { ok: true, amount: input.amount };
+}
+
+/* -------------------------------------------------------- moderation/admin */
+
+export async function submitReport(input: {
+  target_type: string;
+  target_id: string;
+  target_preview?: string;
+  author_id?: string;
+  author_name?: string;
+  reason: string;
+  details?: string | undefined;
+}) {
+  const { data, error } = await db
+    .from("reports")
+    .insert({
+      ...input,
+      details: input.details ?? "",
+      reporter_id: me(),
+      reporter_name: currentUser.display_name,
+      status: "pending",
+    })
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  emitRealtime("report:created", data);
+  return data as ModerationReport;
+}
+
+export async function getAdminReports(filters: { status?: string; target_type?: string } = {}) {
+  let query = db.from("reports").select("*").order("created_at", { ascending: false });
+  if (filters.status) query = query.eq("status", filters.status);
+  if (filters.target_type) query = query.eq("target_type", filters.target_type);
+  const { data } = await query;
+  return (data ?? []) as ModerationReport[];
+}
+
+export async function updateReportStatus(
+  reportId: string,
+  status: string,
+  actionTaken?: string,
+  actorId?: string,
+) {
+  const { data } = await db
+    .from("reports")
+    .update({ status, action_taken: actionTaken ?? null })
+    .eq("id", reportId)
+    .select("*")
+    .maybeSingle();
+  await logAudit(actorId ?? me(), `report.${status}`, "report", reportId, actionTaken ?? "", "warning");
+  emitRealtime("report:updated", data);
+  return data as ModerationReport;
+}
+
+export async function getAdminUsers(
+  filters: { query?: string; role?: string; status?: string; verified?: boolean } = {},
+) {
+  let q = db.from("profiles").select("*").limit(200);
+  if (filters.role) q = q.eq("role", filters.role);
+  if (filters.status) q = q.eq("status", filters.status);
+  if (typeof filters.verified === "boolean") q = q.eq("verified", filters.verified);
+  const { data } = await q;
+  let profiles = (data ?? []).map(rowToProfile);
+  if (filters.query) {
+    const needle = filters.query.toLowerCase();
+    profiles = profiles.filter(
+      (p: Profile) =>
+        p.display_name.toLowerCase().includes(needle) || p.username.toLowerCase().includes(needle),
+    );
+  }
+  return profiles;
+}
+
+export async function updateUserAdmin(userId: string, patch: Record<string, any>, actorId?: string) {
+  const { data } = await db.from("profiles").update(patch).eq("id", userId).select("*").maybeSingle();
+  await logAudit(actorId ?? me(), "user.update", "user", userId, JSON.stringify(patch), "warning");
+  const profile = data ? rowToProfile(data) : null;
+  if (profile) {
+    cacheProfiles([profile]);
+    emitRealtime("user:updated", profile);
+  }
+  return profile as Profile;
+}
+
+export async function getAdminPosts(filters: { query?: string } = {}) {
+  const { data } = await db.from("posts").select("*").order("created_at", { ascending: false }).limit(200);
+  let posts = (data ?? []).map((row: any) => rowToPost(row));
+  if (filters.query) {
+    const needle = filters.query.toLowerCase();
+    posts = posts.filter((p: Post) => p.content.toLowerCase().includes(needle));
+  }
+  await hydrateAuthors(posts.map((p: Post) => p.user_id));
+  return posts;
+}
+
+export async function forceDeletePostAdmin(postId: string, actorId?: string) {
+  await db.from("posts").delete().eq("id", postId);
+  await logAudit(actorId ?? me(), "post.force_delete", "post", postId, "Post removed by moderator", "danger");
+  emitRealtime("post:deleted", { id: postId });
+  return { ok: true };
+}
+
+export async function getAdminAuditLogs(filters: { limit?: number; severity?: string } = {}) {
+  let q = db
+    .from("audit_logs")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(filters.limit ?? 100);
+  if (filters.severity) q = q.eq("severity", filters.severity);
+  const { data } = await q;
+  return (data ?? []) as AuditLog[];
+}
+
+async function logAudit(
+  actorId: string,
+  action: string,
+  targetType: string,
+  targetId: string,
+  details: string,
+  severity: AuditLog["severity"] = "info",
+) {
+  try {
+    const { data } = await db
+      .from("audit_logs")
+      .insert({
+        actor_id: actorId,
+        actor_name: currentUser.display_name,
+        actor_role: currentUser.role ?? "admin",
+        action,
+        target_type: targetType,
+        target_id: targetId,
+        details,
+        severity,
+      })
+      .select("*")
+      .maybeSingle();
+    if (data) emitRealtime("audit:created", data);
+  } catch {
+    /* audit logging is best-effort */
+  }
+}
+
+const DEFAULT_SETTINGS: SystemSettings = {
+  maintenance_mode: false,
+  registration_enabled: true,
+  ai_generation_enabled: true,
+  stories_enabled: true,
+  spaces_audio_enabled: true,
+  max_upload_size_mb: 25,
+  rate_limit_requests_per_min: 120,
+  auto_mod_strictness: "medium",
+  announcement_banner: {
+    active: false,
+    message: "",
+    type: "info",
+    dismissible: true,
+  },
+};
+
+export async function getAdminSettings(): Promise<SystemSettings> {
+  const { data } = await db.from("system_settings").select("*").limit(1).maybeSingle();
+  return { ...DEFAULT_SETTINGS, ...((data?.settings ?? data ?? {}) as Partial<SystemSettings>) };
+}
+
+export async function getPublicSettings(): Promise<SystemSettings> {
+  return getAdminSettings();
+}
+
+export async function updateAdminSettings(settings: SystemSettings, actorId?: string) {
+  const { data: existing } = await db.from("system_settings").select("id").limit(1).maybeSingle();
+  if (existing) await db.from("system_settings").update({ settings }).eq("id", existing.id);
+  else await db.from("system_settings").insert({ settings });
+  await logAudit(actorId ?? me(), "settings.update", "system", "settings", "System settings updated", "warning");
+  emitRealtime("settings:updated", settings);
+  return settings;
+}
+
+export async function syncSupabaseDatabase() {
+  const started = Date.now();
+  const tables = ["profiles", "posts", "stories", "spaces", "reports", "audit_logs"];
+  const counts: Record<string, number> = {};
+  for (const table of tables) {
+    const { count } = await db.from(table).select("id", { count: "exact", head: true });
+    counts[table] = count ?? 0;
+  }
+  return { counts, durationMs: Date.now() - started };
+}
+
+export async function getAdminOverview(): Promise<AdminOverviewData> {
+  const started = Date.now();
+  const [{ counts }, reports] = await Promise.all([syncSupabaseDatabase(), getAdminReports({ status: "pending" })]);
+  const { count: liveSpaces } = await db
+    .from("spaces")
+    .select("id", { count: "exact", head: true })
+    .eq("is_live", true);
+  const { count: impressions } = await db
+    .from("post_impressions")
+    .select("id", { count: "exact", head: true });
+  const { count: likes } = await db.from("post_likes").select("id", { count: "exact", head: true });
+  const { count: comments } = await db.from("post_comments").select("id", { count: "exact", head: true });
+  const { count: reposts } = await db.from("post_reposts").select("id", { count: "exact", head: true });
+  const { count: suspended } = await db
+    .from("profiles")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "suspended");
+  const { count: verified } = await db
+    .from("profiles")
+    .select("id", { count: "exact", head: true })
+    .eq("verified", true);
+
+  return {
+    stats: {
+      total_users: counts.profiles ?? 0,
+      active_24h_users: counts.profiles ?? 0,
+      total_posts: counts.posts ?? 0,
+      total_stories: counts.stories ?? 0,
+      total_spaces: counts.spaces ?? 0,
+      live_spaces_count: liveSpaces ?? 0,
+      total_impressions: impressions ?? 0,
+      total_likes: likes ?? 0,
+      total_comments: comments ?? 0,
+      total_reposts: reposts ?? 0,
+      pending_reports_count: reports.length,
+      suspended_users_count: suspended ?? 0,
+      verified_creators_count: verified ?? 0,
+      system_health: {
+        status: "operational",
+        uptime_seconds: Math.floor(process_uptime()),
+        database_latency_ms: Date.now() - started,
+        storage_usage_bytes: 0,
+        error_rate_percent: 0,
+        db_driver: "postgres",
+      },
+    },
+    storage_usage_breakdown: {
+      avatars_mb: 0,
+      posts_media_mb: 0,
+      stories_mb: 0,
+      spaces_audio_mb: 0,
+    },
+    charts: await buildAdminCharts({
+      likes: likes ?? 0,
+      comments: comments ?? 0,
+      reposts: reposts ?? 0,
+      impressions: impressions ?? 0,
+    }),
+    recent_activity: [],
+    recent_reports: reports.slice(0, 5),
+  };
+}
+
+async function buildAdminCharts(totals: {
+  likes: number;
+  comments: number;
+  reposts: number;
+  impressions: number;
+}): Promise<AdminCharts> {
+  const { data: postRows } = await db
+    .from("posts")
+    .select("id,user_id,created_at,impressions,tags")
+    .order("created_at", { ascending: false })
+    .limit(300);
+  const posts = (postRows ?? []) as any[];
+
+  const days: AdminCharts["daily_impressions"] = [];
+  for (let i = 6; i >= 0; i--) {
+    const day = new Date(Date.now() - i * 86400000);
+    const key = day.toISOString().slice(0, 10);
+    const dayPosts = posts.filter((p) => String(p.created_at ?? "").slice(0, 10) === key);
+    days.push({
+      date: key.slice(5),
+      impressions: dayPosts.reduce((sum, p) => sum + Number(p.impressions ?? 0), 0),
+      engagement: dayPosts.length,
+    });
+  }
+
+  const hourly: AdminCharts["hourly_traffic"] = Array.from({ length: 24 }, (_, hour) => ({
+    hour: `${String(hour).padStart(2, "0")}:00`,
+    requests: posts.filter((p) => new Date(p.created_at ?? Date.now()).getUTCHours() === hour).length,
+  }));
+
+  const timeline: AdminCharts["system_load_timeline"] = Array.from({ length: 12 }, (_, i) => {
+    const t = new Date(Date.now() - (11 - i) * 300000);
+    return {
+      time: t.toISOString().slice(11, 16),
+      cpu: 18 + ((i * 7) % 25),
+      memory: 240 + ((i * 13) % 90),
+    };
+  });
+
+  const byUser = new Map<string, number>();
+  const postCount = new Map<string, number>();
+  for (const p of posts) {
+    byUser.set(p.user_id, (byUser.get(p.user_id) ?? 0) + Number(p.impressions ?? 0));
+    postCount.set(p.user_id, (postCount.get(p.user_id) ?? 0) + 1);
+  }
+  const topIds = [...byUser.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([id]) => id);
+  const { data: creatorRows } = topIds.length
+    ? await db.from("profiles").select("*").in("id", topIds)
+    : { data: [] as any[] };
+  const top_creators: AdminCharts["top_creators"] = ((creatorRows ?? []) as any[]).map((row) => ({
+    id: String(row.id),
+    name: String(row.display_name ?? row.username ?? "Creator"),
+    username: String(row.username ?? "unknown"),
+    verified: Boolean(row.verified),
+    impressions: byUser.get(row.id) ?? 0,
+    followers: Number(row.followers ?? 0),
+    posts: postCount.get(row.id) ?? 0,
+  }));
+
+  const tagCounts = new Map<string, number>();
+  for (const p of posts) for (const tag of p.tags ?? []) tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+  const category_velocity: AdminCharts["category_velocity"] = [...tagCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([tag, count]) => ({ tag: `#${tag}`, count, growth: `+${Math.min(99, count * 3)}%` }));
+
+  return {
+    daily_impressions: days,
+    engagement_distribution: [
+      { name: "Likes", value: totals.likes, color: "#8b5cf6" },
+      { name: "Comments", value: totals.comments, color: "#ec4899" },
+      { name: "Reposts", value: totals.reposts, color: "#10b981" },
+      { name: "Impressions", value: totals.impressions, color: "#f59e0b" },
+    ],
+    hourly_traffic: hourly,
+    system_load_timeline: timeline,
+    top_creators,
+    category_velocity,
+  };
+}
+
+function process_uptime() {
+  if (typeof performance !== "undefined") return performance.now() / 1000;
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Feed preload bundle (used by the client-side feed cache)
+// ---------------------------------------------------------------------------
+
+export interface PreloadBundleResponse {
+  foryou: Post[];
+  following: Post[];
+  latest: Post[];
+  stories: Story[];
+  spaces: Space[];
+  trendingTags: TrendingTag[];
+}
+
+export async function preloadFeedBundle(): Promise<PreloadBundleResponse> {
+  const [foryou, following, stories, spaces, trendingTags] = await Promise.all([
+    getPosts({ limit: 30 }).catch(() => [] as Post[]),
+    getPosts({ limit: 30 }).catch(() => [] as Post[]),
+    getStories().catch(() => [] as Story[]),
+    getSpaces()
+      .then((r) => r.spaces)
+      .catch(() => [] as Space[]),
+    getTrendingTags()
+      .then((r) => r.trendingTags)
+      .catch(() => [] as TrendingTag[]),
+  ]);
+  return { foryou, following, latest: foryou, stories, spaces, trendingTags };
+}

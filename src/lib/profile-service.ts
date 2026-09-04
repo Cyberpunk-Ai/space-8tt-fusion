@@ -87,7 +87,7 @@ export function rowToProfile(row: Record<string, unknown>): Profile {
   };
 }
 
-export async function getProfile(id: string): Promise<Profile | null> {
+export async function fetchProfile(id: string): Promise<Profile | null> {
   if (!id || id === "guest") return null;
   const cached = profileCache.get(id);
   if (cached) return cached;
@@ -95,7 +95,8 @@ export async function getProfile(id: string): Promise<Profile | null> {
   const existing = inflight.get(id);
   if (existing) return existing;
 
-  const request = supabase
+  const request: Promise<Profile | null> = Promise.resolve(
+    supabase
     .from("profiles")
     .select("*")
     .eq("id", id)
@@ -107,10 +108,22 @@ export async function getProfile(id: string): Promise<Profile | null> {
       profileCache.set(id, profile);
       notify();
       return profile;
-    });
+    }),
+  );
 
   inflight.set(id, request);
   return request;
+}
+
+/**
+ * Synchronous profile lookup used by render paths. Returns the cached profile
+ * when available and kicks off a background fetch otherwise.
+ */
+export function getProfile(id: string): Profile {
+  const cached = id ? profileCache.get(id) : undefined;
+  if (cached) return cached;
+  if (id && id !== "guest") void fetchProfile(id);
+  return { ...GUEST_PROFILE, id: id || "guest", display_name: "Loading…", username: "unknown" };
 }
 
 /** Reactive profile lookup used by cards and headers. */
@@ -130,7 +143,7 @@ export function useProfile(id: string | undefined | null): Profile | null {
       if (active && next) setProfile(next);
     };
     sync();
-    if (!profileCache.has(id)) void getProfile(id);
+    if (!profileCache.has(id)) void fetchProfile(id);
     const unsubscribe = subscribeProfiles(sync);
     return () => {
       active = false;
