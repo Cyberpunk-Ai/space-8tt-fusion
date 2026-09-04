@@ -50,6 +50,17 @@ export function updateUserSession(patch: Partial<Profile>) {
   }
 }
 
+/** Adopt a freshly authenticated profile into the in-memory session. */
+export function setLoggedIn(profile: Profile) {
+  setCurrentUser(profile);
+}
+
+/** Clear the Supabase session and reset the in-memory profile to guest. */
+export function setLoggedOut() {
+  void supabase.auth.signOut();
+  setCurrentUser(null);
+}
+
 export function useAuth() {
   const [user, setUser] = useState<Profile | null>(
     currentUser.id === "guest" ? null : currentUser,

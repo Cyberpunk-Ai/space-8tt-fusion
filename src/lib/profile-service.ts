@@ -63,6 +63,32 @@ export function cacheProfiles(rows: Profile[]) {
   if (changed) notify();
 }
 
+/**
+ * Compatibility view over the profile cache: a plain-object style registry
+ * (`profileRegistry[id]`) backed by the live cache, used by list/search UIs.
+ */
+export const profileRegistry: Record<string, Profile> = new Proxy(
+  {},
+  {
+    get: (_t, key: string) => profileCache.get(key),
+    has: (_t, key: string) => profileCache.has(key as string),
+    ownKeys: () => Array.from(profileCache.keys()),
+    getOwnPropertyDescriptor: (_t, key: string) =>
+      profileCache.has(key)
+        ? { enumerable: true, configurable: true, value: profileCache.get(key) }
+        : undefined,
+  },
+) as Record<string, Profile>;
+
+/** Merge one profile into the shared cache and notify subscribers. */
+export function updateProfileCache(profile: Profile) {
+  if (!profile?.id) return;
+  profileCache.set(profile.id, profile);
+  notify();
+}
+
+export const defaultUserProfile = GUEST_PROFILE;
+
 export function getCachedProfile(id: string): Profile | undefined {
   return profileCache.get(id);
 }
