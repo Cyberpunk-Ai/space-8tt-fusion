@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import { insertOwnedRow, loadOwnedRows, signedInProfileId } from "@/lib/remote-store";
+
 export interface SupportTicket {
   id: string;
   subject: string;
@@ -26,6 +28,30 @@ function read(): SupportTicket[] {
 let tickets = read();
 const listeners = new Set<() => void>();
 
+function persist() {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(tickets));
+  } catch {
+    /* storage unavailable */
+  }
+  listeners.forEach((fn) => fn());
+}
+
+async function hydrate() {
+  if (!signedInProfileId()) return;
+  tickets = await loadOwnedRows<SupportTicket>("support_tickets", (row) => ({
+    id: String(row.id),
+    subject: String(row.subject),
+    category: row.category as SupportTicket["category"],
+    priority: row.priority as SupportTicket["priority"],
+    status: (row.status ?? "open") as SupportTicket["status"],
+    lastMessage: String(row.body ?? ""),
+    updatedAt: new Date(row.updated_at ?? row.created_at).toLocaleString(),
+    createdAt: new Date(row.created_at).toLocaleString(),
+  }));
+  persist();
+}
+
 export function useSupport() {
   const [list, setList] = useState<SupportTicket[]>(tickets);
 
@@ -33,19 +59,27 @@ export function useSupport() {
     const sync = () => setList([...tickets]);
     listeners.add(sync);
     sync();
+    void hydrate();
     return () => {
       listeners.delete(sync);
     };
   }, []);
 
-  function createTicket(
+  async function createTicket(
     subject: string,
     category: SupportTicket["category"],
     priority: SupportTicket["priority"],
     message: string,
   ) {
+    const row = await insertOwnedRow("support_tickets", {
+      subject,
+      category,
+      priority,
+      body: message,
+      status: "open",
+    }).catch(() => null);
     const ticket: SupportTicket = {
-      id: `TKT-${Date.now().toString().slice(-6)}`,
+      id: String(row?.id ?? `TKT-${Date.now().toString().slice(-6)}`),
       subject,
       category,
       priority,
@@ -55,12 +89,7 @@ export function useSupport() {
       createdAt: new Date().toLocaleString(),
     };
     tickets = [ticket, ...tickets];
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(tickets));
-    } catch {
-      /* storage unavailable */
-    }
-    listeners.forEach((fn) => fn());
+    persist();
     return ticket;
   }
 

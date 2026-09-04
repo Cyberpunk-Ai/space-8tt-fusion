@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
 
+import {
+  deleteOwnedRow,
+  insertOwnedRow,
+  loadOwnedRows,
+  signedInProfileId,
+} from "@/lib/remote-store";
+
 export interface ApiKey {
   id: string;
   name: string;
@@ -56,6 +63,28 @@ function randomToken() {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+async function hydrate() {
+  if (!signedInProfileId()) return;
+  const [apiKeys, webhooks] = await Promise.all([
+    loadOwnedRows<ApiKey>("api_keys", (row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      maskedKey: `${row.prefix}••••••••${String(row.key_hash).slice(-6)}`,
+      createdAt: new Date(row.created_at).toLocaleDateString(),
+      lastUsed: row.last_used_at ? new Date(row.last_used_at).toLocaleDateString() : "Never",
+    })),
+    loadOwnedRows<Webhook>("webhooks", (row) => ({
+      id: String(row.id),
+      url: String(row.url),
+      description: "",
+      events: Array.isArray(row.events) ? (row.events as string[]) : [],
+      status: row.active ? "active" : "paused",
+      createdAt: new Date(row.created_at).toLocaleDateString(),
+    })),
+  ]);
+  commit({ ...state, apiKeys, webhooks });
+}
+
 export function useDeveloper() {
   const [snapshot, setSnapshot] = useState<DeveloperState>(state);
 
@@ -63,6 +92,7 @@ export function useDeveloper() {
     const sync = () => setSnapshot({ ...state });
     listeners.add(sync);
     sync();
+    void hydrate();
     return () => {
       listeners.delete(sync);
     };
@@ -70,8 +100,14 @@ export function useDeveloper() {
 
   async function generateApiKey(name: string): Promise<ApiKey> {
     const token = `sk_live_${randomToken()}`;
+    const row = await insertOwnedRow("api_keys", {
+      name,
+      prefix: "sk_live_",
+      key_hash: token.slice(-12),
+      scopes: ["read"],
+    });
     const key: ApiKey = {
-      id: `key_${Date.now()}`,
+      id: String(row?.id ?? `key_${Date.now()}`),
       name,
       maskedKey: `sk_live_••••••••${token.slice(-6)}`,
       fullKey: token,
@@ -83,12 +119,14 @@ export function useDeveloper() {
   }
 
   function revokeApiKey(id: string) {
+    void deleteOwnedRow("api_keys", id).catch(() => undefined);
     commit({ ...state, apiKeys: state.apiKeys.filter((k) => k.id !== id) });
   }
 
-  function addWebhook(url: string, description: string, events: string[]) {
+  async function addWebhook(url: string, description: string, events: string[]) {
+    const row = await insertOwnedRow("webhooks", { url, events, active: true }).catch(() => null);
     const hook: Webhook = {
-      id: `wh_${Date.now()}`,
+      id: String(row?.id ?? `wh_${Date.now()}`),
       url,
       description,
       events,
@@ -99,6 +137,7 @@ export function useDeveloper() {
   }
 
   function removeWebhook(id: string) {
+    void deleteOwnedRow("webhooks", id).catch(() => undefined);
     commit({ ...state, webhooks: state.webhooks.filter((w) => w.id !== id) });
   }
 

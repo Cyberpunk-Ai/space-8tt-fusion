@@ -10,6 +10,7 @@ import { AdminSystemSettingsTab } from "@/components/admin/AdminSystemSettingsTa
 import { AdminUsersTab } from "@/components/admin/AdminUsersTab";
 import { getAdminOverview } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-state";
+import { supabase } from "@/integrations/supabase/client";
 import { currentUser } from "@/lib/profile-service";
 import type { AdminOverviewData, UserRole } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -38,6 +39,27 @@ function AdminPage() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("overview");
   const [overview, setOverview] = useState<AdminOverviewData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [access, setAccess] = useState<"checking" | "granted" | "denied">("checking");
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const { data: sessionData } = await supabase.auth.getUser();
+      const authUserId = sessionData.user?.id;
+      if (!authUserId) {
+        if (!cancelled) setAccess("denied");
+        return;
+      }
+      const [{ data: isAdmin }, { data: isMod }] = await Promise.all([
+        supabase.rpc("has_role", { _user_id: authUserId, _role: "admin" }),
+        supabase.rpc("has_role", { _user_id: authUserId, _role: "moderator" }),
+      ]);
+      if (!cancelled) setAccess(isAdmin || isMod ? "granted" : "denied");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -51,8 +73,24 @@ function AdminPage() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (access === "granted") void load();
+  }, [load, access]);
+
+  if (access !== "granted") {
+    return (
+      <div className="mx-auto flex min-h-[60vh] max-w-md flex-col items-center justify-center gap-3 px-6 text-center">
+        <h1 className="text-2xl font-extrabold">
+          {access === "checking" ? "Checking access…" : "Admin access required"}
+        </h1>
+        {access === "denied" ? (
+          <p className="text-sm text-muted-foreground">
+            This console is limited to Spaces administrators and moderators. Sign in with an
+            admin account to continue.
+          </p>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6">

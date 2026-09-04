@@ -109,20 +109,21 @@ async function toggleRelation(table: string, postId: string, event: string, coun
   const userId = me();
   const { data: existing } = await db
     .from(table)
-    .select("id")
+    .select("post_id")
     .eq("post_id", postId)
     .eq("user_id", userId)
     .maybeSingle();
 
   if (existing) {
-    await db.from(table).delete().eq("id", existing.id);
+    await db.from(table).delete().eq("post_id", postId).eq("user_id", userId);
   } else {
-    await db.from(table).insert({ post_id: postId, user_id: userId });
+    const { error } = await db.from(table).insert({ post_id: postId, user_id: userId });
+    if (error) throw error;
   }
 
   const { count } = await db
     .from(table)
-    .select("id", { count: "exact", head: true })
+    .select("post_id", { count: "exact", head: true })
     .eq("post_id", postId);
 
   const result = { active: !existing, count: count ?? 0 };
@@ -131,25 +132,38 @@ async function toggleRelation(table: string, postId: string, event: string, coun
 }
 
 export async function toggleLikePost(postId: string) {
-  const { active, count } = await toggleRelation("post_likes", postId, "post:liked", "likeCount");
+  const { active, count } = await toggleRelation("likes", postId, "post:liked", "likeCount");
   emitRealtime("post_like_updated", { postId, likeCount: count });
   return { liked: active, likeCount: count, likesCount: count };
 }
 
 export async function toggleRepostPost(postId: string) {
-  const { active, count } = await toggleRelation("post_reposts", postId, "post:reposted", "repostCount");
+  const { active, count } = await toggleRelation("reposts", postId, "post:reposted", "repostCount");
   emitRealtime("post_repost_updated", { postId, repostCount: count });
   return { reposted: active, repostCount: count };
 }
 
 export async function toggleBookmarkPost(postId: string) {
-  const { active } = await toggleRelation("post_bookmarks", postId, "post:bookmarked", "bookmarkCount");
+  const { active } = await toggleRelation("bookmarks", postId, "post:bookmarked", "bookmarkCount");
   return { bookmarked: active };
 }
 
+export async function getMyEngagement(postIds: string[]) {
+  const userId = me();
+  if (!userId || postIds.length === 0) return { liked: [], reposted: [], bookmarked: [] };
+  const [likes, reposts, bookmarks] = await Promise.all([
+    db.from("likes").select("post_id").eq("user_id", userId).in("post_id", postIds),
+    db.from("reposts").select("post_id").eq("user_id", userId).in("post_id", postIds),
+    db.from("bookmarks").select("post_id").eq("user_id", userId).in("post_id", postIds),
+  ]);
+  const ids = (r: any) => ((r.data ?? []) as any[]).map((x) => String(x.post_id));
+  return { liked: ids(likes), reposted: ids(reposts), bookmarked: ids(bookmarks) };
+}
+
+
 export async function addPostComment(postId: string, content: string) {
   const { data, error } = await db
-    .from("post_comments")
+    .from("comments")
     .insert({ post_id: postId, user_id: me(), content })
     .select("*")
     .single();
@@ -168,7 +182,7 @@ export async function addPostComment(postId: string, content: string) {
 
 export async function getPostComments(postId: string): Promise<PostComment[]> {
   const { data } = await db
-    .from("post_comments")
+    .from("comments")
     .select("*")
     .eq("post_id", postId)
     .order("created_at", { ascending: true });
@@ -351,8 +365,8 @@ function rowToSpace(row: any): Space {
     host_name: row.host_name ?? undefined,
     topic: row.topic ?? "General",
     listeners: row.listeners ?? 0,
-    live: row.is_live ?? row.live ?? false,
-    is_live: row.is_live ?? false,
+    live: row.live ?? false,
+    is_live: row.live ?? false,
     gradient: row.gradient ?? "from-brand to-brand-pink",
     recorded: row.recorded ?? false,
     duration: row.duration ?? undefined,
@@ -417,7 +431,7 @@ export async function sendSpaceMessage(spaceId: string, body: string) {
 }
 
 export async function terminateSpaceAdmin(spaceId: string, actorId: string) {
-  await db.from("spaces").update({ is_live: false }).eq("id", spaceId);
+  await db.from("spaces").update({ live: false }).eq("id", spaceId);
   await logAudit(actorId, "space.terminate", "space", spaceId, "Space terminated by admin", "danger");
   emitRealtime("space:terminated", { id: spaceId });
   return { ok: true };
@@ -426,15 +440,19 @@ export async function terminateSpaceAdmin(spaceId: string, actorId: string) {
 /* ------------------------------------------------------------------- chat */
 
 export async function getConversations(): Promise<Conversation[]> {
+  const userId = me();
   const { data } = await db
     .from("conversations")
     .select("*")
+    .or(`user_a.eq.${userId},user_b.eq.${userId}`)
     .order("updated_at", { ascending: false });
-  return (data ?? []).map((row: any) => ({
+  const rows = (data ?? []) as any[];
+  await hydrateAuthors(rows.flatMap((r) => [r.user_a, r.user_b]));
+  return rows.map((row: any) => ({
     id: row.id,
-    participant_id: row.participant_id ?? row.user_b ?? "",
+    participant_id: row.user_a === userId ? row.user_b : row.user_a,
     preview: row.preview ?? "",
-    unread: row.unread ?? 0,
+    unread: 0,
     online: false,
     updated_at: row.updated_at ?? nowIso(),
   }));
@@ -446,24 +464,57 @@ export async function getMessages(conversationId: string): Promise<Message[]> {
     .select("*")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true });
+  await db
+    .from("messages")
+    .update({ read_at: nowIso() })
+    .eq("conversation_id", conversationId)
+    .neq("sender_id", me())
+    .is("read_at", null);
   return (data ?? []) as Message[];
 }
 
-export async function sendMessage(recipientId: string, body: string) {
+export async function getOrCreateConversation(participantId: string): Promise<string> {
+  const userId = me();
+  const { data: existing } = await db
+    .from("conversations")
+    .select("id")
+    .or(
+      `and(user_a.eq.${userId},user_b.eq.${participantId}),and(user_a.eq.${participantId},user_b.eq.${userId})`,
+    )
+    .maybeSingle();
+  if (existing?.id) return String(existing.id);
+  const { data, error } = await db
+    .from("conversations")
+    .insert({ user_a: userId, user_b: participantId, preview: "" })
+    .select("id")
+    .single();
+  if (error) throw error;
+  return String(data.id);
+}
+
+export async function sendMessage(target: string, body: string) {
+  const isConversation = /^[0-9a-f]{8}-/i.test(target);
+  const conversationId = isConversation ? target : await getOrCreateConversation(target);
   const { data, error } = await db
     .from("messages")
-    .insert({ sender_id: me(), recipient_id: recipientId, body })
+    .insert({ conversation_id: conversationId, sender_id: me(), body })
     .select("*")
-    .maybeSingle();
+    .single();
   if (error) throw error;
+  await db
+    .from("conversations")
+    .update({ preview: body.slice(0, 120), updated_at: nowIso() })
+    .eq("id", conversationId);
   emitRealtime("message:created", data);
-  return { message: data as Message };
+  return { message: data as Message, conversationId };
 }
+
 
 export async function getNotifications(): Promise<Notification[]> {
   const { data } = await db
     .from("notifications")
     .select("*")
+    .eq("recipient_id", me())
     .order("created_at", { ascending: false })
     .limit(50);
   return (data ?? []) as Notification[];
@@ -479,13 +530,13 @@ export async function markNotificationsRead() {
 
 export async function getFeedPreferences(): Promise<{ preferences: UserFeedPreferences }> {
   const { data } = await db.from("feed_preferences").select("*").eq("user_id", me()).maybeSingle();
-  return { preferences: (data?.preferences ?? {}) as UserFeedPreferences };
+  return { preferences: (data?.prefs ?? {}) as UserFeedPreferences };
 }
 
 export async function updateFeedPreferences(patch: Partial<UserFeedPreferences>) {
   const { preferences } = await getFeedPreferences();
   const merged = { ...preferences, ...patch };
-  await db.from("feed_preferences").upsert({ user_id: me(), preferences: merged });
+  await db.from("feed_preferences").upsert({ user_id: me(), prefs: merged });
   return { preferences: merged as UserFeedPreferences };
 }
 
@@ -502,7 +553,7 @@ export async function sendFeedFeedback(payload: FeedFeedbackPayload) {
   if (action === "mute_author" && payload.authorId) {
     next.mutedAuthors = Array.from(new Set([...(next.mutedAuthors ?? []), payload.authorId]));
   }
-  await db.from("feed_preferences").upsert({ user_id: me(), preferences: next });
+  await db.from("feed_preferences").upsert({ user_id: me(), prefs: next });
   return { preferences: next };
 }
 
@@ -566,20 +617,36 @@ export async function sendTipApi(input: {
   postId?: string;
   spaceId?: string;
 }) {
-  try {
-    await db.from("tips").insert({
-      sender_id: me(),
-      recipient_username: input.recipientUsername ?? null,
-      amount: input.amount,
-      message: input.message ?? null,
-      post_id: input.postId ?? null,
-      space_id: input.spaceId ?? null,
-    });
-  } catch {
-    /* tips are best-effort while payments are simulated */
+  let recipientId = input.recipientId;
+  if (!recipientId && input.recipientUsername) {
+    const { data } = await db
+      .from("profiles")
+      .select("id")
+      .eq("username", input.recipientUsername.replace(/^@/, ""))
+      .maybeSingle();
+    recipientId = data?.id;
   }
+  if (!recipientId) throw new Error("Recipient not found");
+  const { error } = await db.from("tips").insert({
+    from_user_id: me(),
+    to_user_id: recipientId,
+    amount: input.amount,
+    message: input.message ?? "",
+    post_id: input.postId ?? null,
+  });
+  if (error) throw error;
   emitRealtime("tip:sent", input);
   return { ok: true, amount: input.amount };
+}
+
+export async function getTipsForMe() {
+  const { data } = await db
+    .from("tips")
+    .select("*")
+    .eq("to_user_id", me())
+    .order("created_at", { ascending: false })
+    .limit(100);
+  return (data ?? []) as any[];
 }
 
 /* -------------------------------------------------------- moderation/admin */
@@ -741,7 +808,9 @@ const DEFAULT_SETTINGS: SystemSettings = {
 
 export async function getAdminSettings(): Promise<SystemSettings> {
   const { data } = await db.from("system_settings").select("*").limit(1).maybeSingle();
-  return { ...DEFAULT_SETTINGS, ...((data?.settings ?? data ?? {}) as Partial<SystemSettings>) };
+  if (!data) return DEFAULT_SETTINGS;
+  const { id: _id, updated_at: _u, ...rest } = data as Record<string, unknown>;
+  return { ...DEFAULT_SETTINGS, ...(rest as Partial<SystemSettings>) };
 }
 
 export async function getPublicSettings(): Promise<SystemSettings> {
@@ -750,8 +819,9 @@ export async function getPublicSettings(): Promise<SystemSettings> {
 
 export async function updateAdminSettings(settings: SystemSettings, actorId?: string) {
   const { data: existing } = await db.from("system_settings").select("id").limit(1).maybeSingle();
-  if (existing) await db.from("system_settings").update({ settings }).eq("id", existing.id);
-  else await db.from("system_settings").insert({ settings });
+  const payload = { ...settings, updated_at: nowIso() };
+  if (existing) await db.from("system_settings").update(payload).eq("id", existing.id);
+  else await db.from("system_settings").insert({ id: 1, ...payload });
   await logAudit(actorId ?? me(), "settings.update", "system", "settings", "System settings updated", "warning");
   emitRealtime("settings:updated", settings);
   return settings;
@@ -774,13 +844,13 @@ export async function getAdminOverview(): Promise<AdminOverviewData> {
   const { count: liveSpaces } = await db
     .from("spaces")
     .select("id", { count: "exact", head: true })
-    .eq("is_live", true);
+    .eq("live", true);
   const { count: impressions } = await db
     .from("post_impressions")
     .select("id", { count: "exact", head: true });
-  const { count: likes } = await db.from("post_likes").select("id", { count: "exact", head: true });
-  const { count: comments } = await db.from("post_comments").select("id", { count: "exact", head: true });
-  const { count: reposts } = await db.from("post_reposts").select("id", { count: "exact", head: true });
+  const { count: likes } = await db.from("likes").select("id", { count: "exact", head: true });
+  const { count: comments } = await db.from("comments").select("id", { count: "exact", head: true });
+  const { count: reposts } = await db.from("reposts").select("id", { count: "exact", head: true });
   const { count: suspended } = await db
     .from("profiles")
     .select("id", { count: "exact", head: true })

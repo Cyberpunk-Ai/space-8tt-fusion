@@ -31,7 +31,7 @@ function BookmarksPage() {
     (async () => {
       try {
         const { data } = await (supabase as any)
-          .from("post_bookmarks")
+          .from("bookmarks")
           .select("post_id")
           .eq("user_id", currentUserId);
         const ids = new Set((data ?? []).map((r: { post_id: string }) => r.post_id));

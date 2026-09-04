@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { PLAN_DETAILS, type BillingCycle, type PlanTier } from "@/lib/plans";
 import { currentUser, setCurrentUser, subscribeProfiles } from "@/lib/profile-service";
 import { supabase } from "@/integrations/supabase/client";
+import { attachRemoteRecord, signedInProfileId } from "@/lib/remote-store";
 
 const STORAGE_KEY = "spaces:plan-state";
 
@@ -41,6 +42,27 @@ function read(): StoredPlanState {
 let state = read();
 const listeners = new Set<() => void>();
 
+const remote = attachRemoteRecord<StoredPlanState>({
+  table: "subscriptions",
+  fromRow: (row) => ({
+    cycle: (row.billing_cycle ?? "monthly") as BillingCycle,
+    usage: {
+      aiDraftsToday: row.ai_usage_date === today() ? Number(row.ai_drafts_used ?? 0) : 0,
+      day: today(),
+    },
+  }),
+  toRow: (s) => ({
+    billing_cycle: s.cycle,
+    plan: (currentUser.plan as PlanTier) || "free",
+    ai_drafts_used: s.usage.aiDraftsToday,
+    ai_usage_date: s.usage.day,
+  }),
+  apply: (patch) => {
+    state = { ...state, ...patch };
+    listeners.forEach((fn) => fn());
+  },
+});
+
 function commit(next: Partial<StoredPlanState>) {
   state = { ...state, ...next };
   if (typeof window !== "undefined") {
@@ -51,6 +73,7 @@ function commit(next: Partial<StoredPlanState>) {
     }
   }
   listeners.forEach((fn) => fn());
+  remote.push(state);
 }
 
 /** Opens the global upgrade modal, optionally naming the locked feature. */
@@ -84,8 +107,18 @@ export function usePlan() {
   ) {
     commit(paymentMethod ? { cycle, paymentMethod } : { cycle });
     setCurrentUser({ ...currentUser, plan });
-    if (currentUser.id && currentUser.id !== "guest") {
-      await supabase.from("profiles").update({ plan }).eq("id", currentUser.id);
+    const userId = signedInProfileId();
+    if (userId) {
+      await supabase.from("profiles").update({ plan }).eq("id", userId);
+      await (supabase as any).from("subscriptions").upsert({
+        user_id: userId,
+        plan,
+        billing_cycle: cycle,
+        status: "active",
+        renews_at: new Date(
+          Date.now() + (cycle === "annual" ? 365 : 30) * 86400000,
+        ).toISOString(),
+      });
     }
   }
 
