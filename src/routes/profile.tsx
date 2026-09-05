@@ -23,7 +23,6 @@ import { FeedSkeleton } from "@/components/social/PostSkeleton";
 import { DefaultRail } from "@/components/social/RightRail";
 import { EditProfileModal } from "@/components/social/EditProfileModal";
 import { TipModal } from "@/components/social/TipModal";
-import { AnalyticsDashboard } from "@/components/social/AnalyticsDashboard";
 import { compact } from "@/lib/formatters";
 import { currentUser as defaultUser, getProfile } from "@/lib/profile-service";
 import type { Post, Profile } from "@/lib/types";
@@ -389,7 +388,9 @@ function ProfilePage() {
           {loading ? (
             <FeedSkeleton />
           ) : tab === "Analytics" && isMe ? (
-            <AnalyticsDashboard />
+            <Suspense fallback={<div className="h-64 animate-pulse rounded-2xl bg-muted/40" />}>
+              <AnalyticsDashboard />
+            </Suspense>
           ) : (
             <>
               {list.map((p, i) => (

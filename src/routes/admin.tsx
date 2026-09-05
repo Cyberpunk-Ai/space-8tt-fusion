@@ -5,7 +5,6 @@ import { AdminAuditLogsTab } from "@/components/admin/AdminAuditLogsTab";
 import { AdminContentTab } from "@/components/admin/AdminContentTab";
 import { AdminHeader } from "@/components/admin/AdminHeader";
 import { AdminModerationTab } from "@/components/admin/AdminModerationTab";
-import { AdminOverviewTab } from "@/components/admin/AdminOverviewTab";
 import { AdminSystemSettingsTab } from "@/components/admin/AdminSystemSettingsTab";
 import { AdminUsersTab } from "@/components/admin/AdminUsersTab";
 import { getAdminOverview } from "@/lib/api-client";
