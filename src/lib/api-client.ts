@@ -390,7 +390,7 @@ export async function toggleFollowUser(targetUserId: string) {
   return { following: !existing };
 }
 
-export async function uploadMedia(file: File, folder: "avatars" | "posts" | "stories" | "media" = "media") {
+export async function uploadMedia(file: File, folder: "avatars" | "posts" | "stories" | "media" | "messages" = "media") {
   const ext = file.name.split(".").pop() || "bin";
   const path = `${folder}/${me()}/${Date.now()}.${ext}`;
   const { error } = await supabase.storage.from("media").upload(path, file, { upsert: true });

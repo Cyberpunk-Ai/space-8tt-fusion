@@ -53,7 +53,7 @@ function ExplorePage() {
   const [allPosts, setAllPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(false);
   const [matchedPeople, setMatchedPeople] = useState<Profile[]>(() => {
-    const cached = Array.from(profileRegistry.values()).filter((p) => p.id && p.id !== currentUser.id);
+    const cached = Object.values(profileRegistry).filter((p) => p.id && p.id !== currentUser.id);
     return cached;
   });
   const [topicList, setTopicList] = useState<Topic[]>([]);

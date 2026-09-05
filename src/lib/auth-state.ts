@@ -100,5 +100,12 @@ export function useAuth() {
     setCurrentUser(null);
   }
 
-  return { user, loading, isAuthenticated: !!user, signOut };
+  return {
+    user,
+    loading,
+    isAuthenticated: !!user,
+    isLoggedIn: !!user,
+    signOut,
+    logout: signOut,
+  };
 }
