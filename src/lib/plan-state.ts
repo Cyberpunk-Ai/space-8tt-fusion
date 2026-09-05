@@ -127,10 +127,35 @@ export function usePlan() {
     commit({ usage: { day: usage.day, aiDraftsToday: usage.aiDraftsToday + 1 } });
   }
 
+  async function updateBillingCycle(cycle: BillingCycle) {
+    commit({ cycle });
+    const userId = signedInProfileId();
+    if (userId) {
+      await (supabase as any)
+        .from("subscriptions")
+        .upsert({ user_id: userId, plan: currentPlan, billing_cycle: cycle, status: "active" });
+    }
+  }
+
+  async function cancelSubscription() {
+    setCurrentUser({ ...currentUser, plan: "free" });
+    const userId = signedInProfileId();
+    if (userId) {
+      await supabase.from("profiles").update({ plan: "free" }).eq("id", userId);
+      await (supabase as any)
+        .from("subscriptions")
+        .upsert({ user_id: userId, plan: "free", billing_cycle: state.cycle, status: "canceled" });
+    }
+  }
+
   return {
     currentPlan,
     planDetails,
     cycle: state.cycle,
+    billingCycle: state.cycle,
+    updateBillingCycle,
+    cancelSubscription,
+    isUltra: currentPlan === "pro",
     usage: state.usage,
     paymentMethod: state.paymentMethod ?? null,
     isPlus: currentPlan === "plus" || currentPlan === "pro",

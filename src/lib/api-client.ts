@@ -21,6 +21,7 @@ import type {
   Space,
   Story,
   SystemSettings,
+  Topic,
   TrendingTag,
   UserFeedPreferences,
   FeedFeedbackPayload,
@@ -389,7 +390,7 @@ export async function toggleFollowUser(targetUserId: string) {
   return { following: !existing };
 }
 
-export async function uploadMedia(file: File, folder: "avatars" | "posts" | "stories" | "media" = "media") {
+export async function uploadMedia(file: File, folder: "avatars" | "posts" | "stories" | "media" | "messages" = "media") {
   const ext = file.name.split(".").pop() || "bin";
   const path = `${folder}/${me()}/${Date.now()}.${ext}`;
   const { error } = await supabase.storage.from("media").upload(path, file, { upsert: true });
@@ -568,12 +569,12 @@ export async function getOrCreateConversation(participantId: string): Promise<st
   return String(data.id);
 }
 
-export async function sendMessage(target: string, body: string) {
+export async function sendMessage(target: string, body: string, mediaUrl?: string | null) {
   const isConversation = /^[0-9a-f]{8}-/i.test(target);
   const conversationId = isConversation ? target : await getOrCreateConversation(target);
   const { data, error } = await db
     .from("messages")
-    .insert({ conversation_id: conversationId, sender_id: me(), body })
+    .insert({ conversation_id: conversationId, sender_id: me(), body, media_url: mediaUrl ?? null })
     .select("*")
     .single();
   if (error) throw error;
@@ -1136,10 +1137,8 @@ export async function getBookmarks(): Promise<Post[]> {
 export async function getTopics(): Promise<{ topics: Topic[] }> {
   const { trendingTags } = await getTrendingTags();
   const topics: Topic[] = trendingTags.slice(0, 12).map((t, i) => ({
-    id: t.tag,
     name: `#${t.tag}`,
-    description: `${t.count} recent posts`,
-    posts: t.count,
+    posts: String(t.count),
     gradient: TOPIC_GRADIENTS[i % TOPIC_GRADIENTS.length] ?? "from-brand to-brand-pink",
   }));
   return { topics };
