@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import {
   CalendarDays,
   Link2,
@@ -23,7 +23,6 @@ import { FeedSkeleton } from "@/components/social/PostSkeleton";
 import { DefaultRail } from "@/components/social/RightRail";
 import { EditProfileModal } from "@/components/social/EditProfileModal";
 import { TipModal } from "@/components/social/TipModal";
-import { AnalyticsDashboard } from "@/components/social/AnalyticsDashboard";
 import { compact } from "@/lib/formatters";
 import { currentUser as defaultUser, getProfile } from "@/lib/profile-service";
 import type { Post, Profile } from "@/lib/types";
@@ -35,6 +34,9 @@ import { useBranding } from "@/lib/branding-state";
 import { PLAN_DETAILS } from "@/lib/plans";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+
+
+const AnalyticsDashboard = lazy(() => import("@/components/social/AnalyticsDashboard").then((m) => ({ default: m.AnalyticsDashboard })));
 
 export const Route = createFileRoute("/profile")({
   validateSearch: (search: Record<string, unknown>): { id?: string; user?: string } => ({
@@ -389,7 +391,9 @@ function ProfilePage() {
           {loading ? (
             <FeedSkeleton />
           ) : tab === "Analytics" && isMe ? (
-            <AnalyticsDashboard />
+            <Suspense fallback={<div className="h-64 animate-pulse rounded-2xl bg-muted/40" />}>
+              <AnalyticsDashboard />
+            </Suspense>
           ) : (
             <>
               {list.map((p, i) => (

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import {
   User,
   Bell,
@@ -28,7 +28,6 @@ import {
 } from "lucide-react";
 import { AppShell, PageHeader, Panel } from "@/components/social/AppShell";
 import { Avatar } from "@/components/social/Avatar";
-import { AnalyticsDashboard } from "@/components/social/AnalyticsDashboard";
 import { MonetizationHub } from "@/components/social/MonetizationHub";
 import { CustomBrandingSettings } from "@/components/social/CustomBrandingSettings";
 import { TeamWorkspaceManager } from "@/components/social/TeamWorkspaceManager";
@@ -45,6 +44,9 @@ import {
   updateUserProfile,
   uploadMedia,
 } from "@/lib/api-client";
+
+
+const AnalyticsDashboard = lazy(() => import("@/components/social/AnalyticsDashboard").then((m) => ({ default: m.AnalyticsDashboard })));
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
@@ -763,7 +765,11 @@ function SettingsPage() {
               </div>
             )}
 
-            {active === "analytics" && <AnalyticsDashboard />}
+            {active === "analytics" && (
+              <Suspense fallback={<div className="h-64 animate-pulse rounded-2xl bg-muted/40" />}>
+                <AnalyticsDashboard />
+              </Suspense>
+            )}
             {active === "monetization" && <MonetizationHub />}
             {active === "branding" && <CustomBrandingSettings />}
             {active === "workspaces" && <TeamWorkspaceManager />}
