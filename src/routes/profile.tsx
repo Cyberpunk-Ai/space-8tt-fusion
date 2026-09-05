@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import {
   CalendarDays,
   Link2,
@@ -34,6 +34,9 @@ import { useBranding } from "@/lib/branding-state";
 import { PLAN_DETAILS } from "@/lib/plans";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+
+
+const AnalyticsDashboard = lazy(() => import("@/components/social/AnalyticsDashboard").then((m) => ({ default: m.AnalyticsDashboard })));
 
 export const Route = createFileRoute("/profile")({
   validateSearch: (search: Record<string, unknown>): { id?: string; user?: string } => ({

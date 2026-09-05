@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import {
   User,
   Bell,
@@ -44,6 +44,9 @@ import {
   updateUserProfile,
   uploadMedia,
 } from "@/lib/api-client";
+
+
+const AnalyticsDashboard = lazy(() => import("@/components/social/AnalyticsDashboard").then((m) => ({ default: m.AnalyticsDashboard })));
 
 export const Route = createFileRoute("/settings")({
   head: () => ({

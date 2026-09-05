@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, lazy, Suspense } from "react";
 
 import { AdminAuditLogsTab } from "@/components/admin/AdminAuditLogsTab";
 import { AdminContentTab } from "@/components/admin/AdminContentTab";
@@ -13,6 +13,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { currentUser } from "@/lib/profile-service";
 import type { AdminOverviewData, UserRole } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+
+const AdminOverviewTab = lazy(() => import("@/components/admin/AdminOverviewTab").then((m) => ({ default: m.AdminOverviewTab })));
 
 export const Route = createFileRoute("/admin")({
   head: () => ({
@@ -118,7 +121,9 @@ function AdminPage() {
       </div>
 
       {tab === "overview" && overview && (
+        <Suspense fallback={<div className="h-64 animate-pulse rounded-2xl bg-muted/40" />}>
         <AdminOverviewTab overview={overview} activeRole={activeRole} onNavigateTab={(t) => setTab(t as any)} />
+        </Suspense>
       )}
       {tab === "users" && <AdminUsersTab activeRole={activeRole} currentUserId={profile.id} />}
       {tab === "content" && <AdminContentTab activeRole={activeRole} currentUserId={profile.id} />}
