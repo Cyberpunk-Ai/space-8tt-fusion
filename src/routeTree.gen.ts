@@ -15,6 +15,7 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as BookmarksRouteImport } from './routes/bookmarks'
 import { Route as ExploreRouteImport } from './routes/explore'
 import { Route as FeedRouteImport } from './routes/feed'
+import { Route as HelpRouteImport } from './routes/help'
 import { Route as MessagesRouteImport } from './routes/messages'
 import { Route as NotificationsRouteImport } from './routes/notifications'
 import { Route as PricingRouteImport } from './routes/pricing'
@@ -52,6 +53,11 @@ const ExploreRoute = ExploreRouteImport.update({
 const FeedRoute = FeedRouteImport.update({
   id: '/feed',
   path: '/feed',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HelpRoute = HelpRouteImport.update({
+  id: '/help',
+  path: '/help',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MessagesRoute = MessagesRouteImport.update({
@@ -102,6 +108,7 @@ export interface FileRoutesByFullPath {
   '/bookmarks': typeof BookmarksRoute
   '/explore': typeof ExploreRoute
   '/feed': typeof FeedRoute
+  '/help': typeof HelpRoute
   '/messages': typeof MessagesRoute
   '/notifications': typeof NotificationsRoute
   '/pricing': typeof PricingRoute
@@ -118,6 +125,7 @@ export interface FileRoutesByTo {
   '/bookmarks': typeof BookmarksRoute
   '/explore': typeof ExploreRoute
   '/feed': typeof FeedRoute
+  '/help': typeof HelpRoute
   '/messages': typeof MessagesRoute
   '/notifications': typeof NotificationsRoute
   '/pricing': typeof PricingRoute
@@ -135,6 +143,7 @@ export interface FileRoutesById {
   '/bookmarks': typeof BookmarksRoute
   '/explore': typeof ExploreRoute
   '/feed': typeof FeedRoute
+  '/help': typeof HelpRoute
   '/messages': typeof MessagesRoute
   '/notifications': typeof NotificationsRoute
   '/pricing': typeof PricingRoute
@@ -153,6 +162,7 @@ export interface FileRouteTypes {
     | '/bookmarks'
     | '/explore'
     | '/feed'
+    | '/help'
     | '/messages'
     | '/notifications'
     | '/pricing'
@@ -169,6 +179,7 @@ export interface FileRouteTypes {
     | '/bookmarks'
     | '/explore'
     | '/feed'
+    | '/help'
     | '/messages'
     | '/notifications'
     | '/pricing'
@@ -185,6 +196,7 @@ export interface FileRouteTypes {
     | '/bookmarks'
     | '/explore'
     | '/feed'
+    | '/help'
     | '/messages'
     | '/notifications'
     | '/pricing'
@@ -202,6 +214,7 @@ export interface RootRouteChildren {
   BookmarksRoute: typeof BookmarksRoute
   ExploreRoute: typeof ExploreRoute
   FeedRoute: typeof FeedRoute
+  HelpRoute: typeof HelpRoute
   MessagesRoute: typeof MessagesRoute
   NotificationsRoute: typeof NotificationsRoute
   PricingRoute: typeof PricingRoute
@@ -254,6 +267,13 @@ declare module '@tanstack/react-router' {
       path: '/feed'
       fullPath: '/feed'
       preLoaderRoute: typeof FeedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/help': {
+      id: '/help'
+      path: '/help'
+      fullPath: '/help'
+      preLoaderRoute: typeof HelpRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/messages': {
@@ -322,6 +342,7 @@ const rootRouteChildren: RootRouteChildren = {
   BookmarksRoute: BookmarksRoute,
   ExploreRoute: ExploreRoute,
   FeedRoute: FeedRoute,
+  HelpRoute: HelpRoute,
   MessagesRoute: MessagesRoute,
   NotificationsRoute: NotificationsRoute,
   PricingRoute: PricingRoute,
