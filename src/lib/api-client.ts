@@ -1233,9 +1233,10 @@ export async function getPost(id: string): Promise<Post | null> {
   const post = rowToPost(data);
   await hydrateAuthors([post.user_id]);
   try {
-    const engagement = await getMyEngagement([post.id]);
-    const mine = (engagement as any)?.[post.id];
-    if (mine) Object.assign(post, mine);
+    const e = await getMyEngagement([post.id]);
+    post.likedByMe = e.liked.includes(post.id);
+    post.repostedByMe = e.reposted.includes(post.id);
+    post.bookmarkedByMe = e.bookmarked.includes(post.id);
   } catch {
     /* engagement is optional for signed-out readers */
   }
