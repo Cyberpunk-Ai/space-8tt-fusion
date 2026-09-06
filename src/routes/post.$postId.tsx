@@ -68,7 +68,7 @@ function PostDetailPage() {
     try {
       const created = await addPostComment(postId, content);
       setDraft("");
-      setComments((prev) => [...prev, created as PostComment]);
+      setComments((prev) => [...prev, created.comment]);
     } catch {
       toast.error("Could not post your reply");
     } finally {
