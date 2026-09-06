@@ -19,6 +19,7 @@ import { Route as HelpRouteImport } from './routes/help'
 import { Route as MessagesRouteImport } from './routes/messages'
 import { Route as NotificationsRouteImport } from './routes/notifications'
 import { Route as PricingRouteImport } from './routes/pricing'
+import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SpacesRouteImport } from './routes/spaces'
@@ -76,6 +77,11 @@ const PricingRoute = PricingRouteImport.update({
   path: '/pricing',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProfileRoute = ProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
@@ -118,6 +124,7 @@ export interface FileRoutesByFullPath {
   '/messages': typeof MessagesRoute
   '/notifications': typeof NotificationsRoute
   '/pricing': typeof PricingRoute
+  '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
   '/spaces': typeof SpacesRoute
@@ -136,6 +143,7 @@ export interface FileRoutesByTo {
   '/messages': typeof MessagesRoute
   '/notifications': typeof NotificationsRoute
   '/pricing': typeof PricingRoute
+  '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
   '/spaces': typeof SpacesRoute
@@ -155,6 +163,7 @@ export interface FileRoutesById {
   '/messages': typeof MessagesRoute
   '/notifications': typeof NotificationsRoute
   '/pricing': typeof PricingRoute
+  '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
   '/spaces': typeof SpacesRoute
@@ -175,6 +184,7 @@ export interface FileRouteTypes {
     | '/messages'
     | '/notifications'
     | '/pricing'
+    | '/privacy'
     | '/profile'
     | '/settings'
     | '/spaces'
@@ -193,6 +203,7 @@ export interface FileRouteTypes {
     | '/messages'
     | '/notifications'
     | '/pricing'
+    | '/privacy'
     | '/profile'
     | '/settings'
     | '/spaces'
@@ -211,6 +222,7 @@ export interface FileRouteTypes {
     | '/messages'
     | '/notifications'
     | '/pricing'
+    | '/privacy'
     | '/profile'
     | '/settings'
     | '/spaces'
@@ -230,6 +242,7 @@ export interface RootRouteChildren {
   MessagesRoute: typeof MessagesRoute
   NotificationsRoute: typeof NotificationsRoute
   PricingRoute: typeof PricingRoute
+  PrivacyRoute: typeof PrivacyRoute
   ProfileRoute: typeof ProfileRoute
   SettingsRoute: typeof SettingsRoute
   SpacesRoute: typeof SpacesRoute
@@ -310,6 +323,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PricingRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/profile': {
       id: '/profile'
       path: '/profile'
@@ -366,6 +386,7 @@ const rootRouteChildren: RootRouteChildren = {
   MessagesRoute: MessagesRoute,
   NotificationsRoute: NotificationsRoute,
   PricingRoute: PricingRoute,
+  PrivacyRoute: PrivacyRoute,
   ProfileRoute: ProfileRoute,
   SettingsRoute: SettingsRoute,
   SpacesRoute: SpacesRoute,
