@@ -1225,3 +1225,19 @@ export async function getSystemConfig() {
     brand: appConfig.brand,
   };
 }
+
+/** Fetch a single post by id with its author hydrated and my engagement applied. */
+export async function getPost(id: string): Promise<Post | null> {
+  const { data, error } = await db.from("posts").select("*").eq("id", id).maybeSingle();
+  if (error || !data) return null;
+  const post = rowToPost(data);
+  await hydrateAuthors([post.user_id]);
+  try {
+    const engagement = await getMyEngagement([post.id]);
+    const mine = (engagement as any)?.[post.id];
+    if (mine) Object.assign(post, mine);
+  } catch {
+    /* engagement is optional for signed-out readers */
+  }
+  return post;
+}
