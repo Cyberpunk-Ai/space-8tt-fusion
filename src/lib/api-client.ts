@@ -1225,3 +1225,20 @@ export async function getSystemConfig() {
     brand: appConfig.brand,
   };
 }
+
+/** Fetch a single post by id with its author hydrated and my engagement applied. */
+export async function getPost(id: string): Promise<Post | null> {
+  const { data, error } = await db.from("posts").select("*").eq("id", id).maybeSingle();
+  if (error || !data) return null;
+  const post = rowToPost(data);
+  await hydrateAuthors([post.user_id]);
+  try {
+    const e = await getMyEngagement([post.id]);
+    post.likedByMe = e.liked.includes(post.id);
+    post.repostedByMe = e.reposted.includes(post.id);
+    post.bookmarkedByMe = e.bookmarked.includes(post.id);
+  } catch {
+    /* engagement is optional for signed-out readers */
+  }
+  return post;
+}
