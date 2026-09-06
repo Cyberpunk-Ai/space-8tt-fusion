@@ -22,6 +22,7 @@ import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SpacesRouteImport } from './routes/spaces'
+import { Route as TermsRouteImport } from './routes/terms'
 import { Route as PostPostIdRouteImport } from './routes/post.$postId'
 import { Route as UUsernameRouteImport } from './routes/u.$username'
 
@@ -90,6 +91,11 @@ const SpacesRoute = SpacesRouteImport.update({
   path: '/spaces',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PostPostIdRoute = PostPostIdRouteImport.update({
   id: '/post/$postId',
   path: '/post/$postId',
@@ -115,6 +121,7 @@ export interface FileRoutesByFullPath {
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
   '/spaces': typeof SpacesRoute
+  '/terms': typeof TermsRoute
   '/post/$postId': typeof PostPostIdRoute
   '/u/$username': typeof UUsernameRoute
 }
@@ -132,6 +139,7 @@ export interface FileRoutesByTo {
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
   '/spaces': typeof SpacesRoute
+  '/terms': typeof TermsRoute
   '/post/$postId': typeof PostPostIdRoute
   '/u/$username': typeof UUsernameRoute
 }
@@ -150,6 +158,7 @@ export interface FileRoutesById {
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
   '/spaces': typeof SpacesRoute
+  '/terms': typeof TermsRoute
   '/post/$postId': typeof PostPostIdRoute
   '/u/$username': typeof UUsernameRoute
 }
@@ -169,6 +178,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/settings'
     | '/spaces'
+    | '/terms'
     | '/post/$postId'
     | '/u/$username'
   fileRoutesByTo: FileRoutesByTo
@@ -186,6 +196,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/settings'
     | '/spaces'
+    | '/terms'
     | '/post/$postId'
     | '/u/$username'
   id:
@@ -203,6 +214,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/settings'
     | '/spaces'
+    | '/terms'
     | '/post/$postId'
     | '/u/$username'
   fileRoutesById: FileRoutesById
@@ -221,6 +233,7 @@ export interface RootRouteChildren {
   ProfileRoute: typeof ProfileRoute
   SettingsRoute: typeof SettingsRoute
   SpacesRoute: typeof SpacesRoute
+  TermsRoute: typeof TermsRoute
   PostPostIdRoute: typeof PostPostIdRoute
   UUsernameRoute: typeof UUsernameRoute
 }
@@ -318,6 +331,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SpacesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/post/$postId': {
       id: '/post/$postId'
       path: '/post/$postId'
@@ -349,6 +369,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProfileRoute: ProfileRoute,
   SettingsRoute: SettingsRoute,
   SpacesRoute: SpacesRoute,
+  TermsRoute: TermsRoute,
   PostPostIdRoute: PostPostIdRoute,
   UUsernameRoute: UUsernameRoute,
 }
